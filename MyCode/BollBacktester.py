@@ -1,3 +1,10 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from itertools import product
+import seaborn as sns
+plt.style.use("seaborn-v0_8")
+
 class BollBacktester():
     ''' Class for the vectorized backtesting of Bollinger Bands trading strategies.
     
@@ -413,7 +420,7 @@ class BollBacktester():
         kelly_criterion =   round(self.calculate_kelly_criterion(to_analyze), 6)
         
         print(100 * "=")
-        print("SIMPLE CONTRARIAN STRATEGY | INSTRUMENT = {} | Freq: {} | WINDOW = {}".format(self.symbol, self.freq, self.window))
+        print("SIMPLE BOLLINGER BAND STRATEGY | INSTRUMENT = {} | Freq: {} | WINDOW = {}".format(self.symbol, self.freq, self.window))
         print(100 * "-")
         #print("\n")
         print("PERFORMANCE MEASURES:")
