@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from itertools import product
 import seaborn as sns
+import os
 plt.style.use("seaborn-v0_8")
 
 class BollBacktester():
@@ -144,6 +145,38 @@ class BollBacktester():
         resamp.dropna(inplace = True)
         self.results = resamp
         return resamp 
+    
+
+    def export_resampled_data(self, freq, window, dev, file_name):
+        """
+        Resamples the data using the prepare_data method and exports it to a specified CSV file.
+
+        Parameters
+        ==========
+        freq: int
+            Data frequency/granularity to work with (in minutes).
+        window: int
+            Time window (number of bars) to calculate the simple moving average price (SMA).
+        dev: int
+            Number of standard deviations to calculate upper and lower bands.
+        file_name: str
+            The name of the CSV file to be saved.
+        """
+        try:
+            # Call the prepare_data method to resample the data
+            self.prepare_data(freq, window, dev)
+            
+            # Construct the file path dynamically
+            parent_folder = os.path.dirname(os.path.dirname(__file__))
+            data_folder = os.path.join(parent_folder, 'data')
+            os.makedirs(data_folder, exist_ok=True)  # Ensure the 'data' folder exists
+            file_path = os.path.join(data_folder, file_name)
+            
+            # Export the resampled data stored in self.results to the specified file path
+            self.results.to_csv(file_path)
+            print(f"Resampled data successfully exported to {file_path}")
+        except Exception as e:
+            print(f"An error occurred while exporting the data: {e}")
     
     def run_backtest(self):
         ''' Runs the strategy backtest.

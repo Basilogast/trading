@@ -1,4 +1,3 @@
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -38,10 +37,17 @@ class IterativeBase():
     def get_data(self):
         ''' Imports the data from detailed.csv (source can be changed).
         '''
-        raw = pd.read_csv("detailed.csv", parse_dates = ["time"], index_col = "time").dropna()
+        print(f"Loading data from: one_minute_resampled_data.csv")
+        print(f"Date range: {self.start} to {self.end}")
+        raw = pd.read_csv("../data/one_minute_resampled_data.csv", parse_dates=["time"], index_col="time").dropna()
+        print(f"Data loaded. Total rows before filtering: {len(raw)}")
         raw = raw.loc[self.start:self.end].copy()
+        print(f"Total rows after filtering by date range: {len(raw)}")
+        if raw.empty:
+            print("Warning: No data available for the specified date range.")
         raw["returns"] = np.log(raw.price / raw.price.shift(1))
         self.data = raw
+        print("Data successfully loaded and processed.")
 
     def plot_data(self, cols = None):  
         ''' Plots the closing price for the symbol.
