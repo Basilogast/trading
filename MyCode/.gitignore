@@ -1,0 +1,28 @@
+# Ignore OANDA configuration files
+*.cfg
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore data files
+*.csv
+*.pkl
+*.h5
+
+# Ignore temporary files
+*.tmp
+*.log
+*.bak
+
+# Ignore virtual environment folders
+venv/
+.env/
+
+# Ignore system files
+.DS_Store
+Thumbs.db

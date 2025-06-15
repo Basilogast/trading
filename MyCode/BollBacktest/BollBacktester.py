@@ -4,7 +4,12 @@ import matplotlib.pyplot as plt
 from itertools import product
 import seaborn as sns
 import os
+import logging
+
 plt.style.use("seaborn-v0_8")
+
+# Initialize logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class BollBacktester():
     ''' Class for the vectorized backtesting of Bollinger Bands trading strategies.
@@ -126,20 +131,25 @@ class BollBacktester():
     def prepare_data(self, freq, window, dev): # Adj!!!
         ''' Prepares the Data for Backtesting.
         '''
+        # Ensure the time column is in datetime format and set as the index
+
         data = self.data.price.to_frame().copy()
         freq = "{}min".format(freq)
         resamp = data.resample(freq).last().dropna().iloc[:-1]
+        logging.debug(f"Data after resampling: {len(resamp)} rows")
         
         ######### INSERT THE STRATEGY SPECIFIC CODE HERE ##################
         resamp["SMA"] = resamp["price"].rolling(window).mean()
         resamp["Lower"] = resamp["SMA"] - resamp["price"].rolling(window).std() * dev
         resamp["Upper"] = resamp["SMA"] + resamp["price"].rolling(window).std() * dev
+        logging.debug(f"Data after rolling calculations: {len(resamp)} rows")
         
         resamp["distance"] = resamp.price - resamp.SMA
         resamp["position"] = np.where(resamp.price < resamp.Lower, 1, np.nan)
         resamp["position"] = np.where(resamp.price > resamp.Upper, -1, resamp["position"])
         resamp["position"] = np.where(resamp.distance * resamp.distance.shift(1) < 0, 0, resamp["position"])
         resamp["position"] = resamp.position.ffill().fillna(0)
+        logging.debug(f"Data after filling positions: {len(resamp)} rows")
         ###################################################################
 
         resamp.dropna(inplace = True)
@@ -176,8 +186,11 @@ class BollBacktester():
             self.results.to_csv(file_path)
             print(f"Resampled data successfully exported to {file_path}")
         except Exception as e:
-            print(f"An error occurred while exporting the data: {e}")
-    
+            logging.error(f"An unexpected error occurred: {e}")
+            raise
+
+        logging.debug("Finished prepare_data method.")
+
     def run_backtest(self):
         ''' Runs the strategy backtest.
         '''
@@ -194,18 +207,41 @@ class BollBacktester():
         self.results = data
         
     def upsample(self):
-        '''  Upsamples/copies trading positions back to higher frequency.
-        '''
-        
-        data = self.data.copy()
+        ''' Upsamples/copies trading positions back to higher frequency. '''
+        logging.debug("Entering upsample function.")
+        logging.debug("State of self.results before creating resamp:")
+        logging.debug(self.results)
+
+        if self.results.empty:
+            logging.warning("self.results is empty. Cannot create resamp.")
+            return
+
         resamp = self.results.copy()
-               
+        logging.debug("State of resamp after copying self.results:")
+        logging.debug(resamp)
+
+        if resamp.empty:
+            logging.warning("resamp is empty after copying self.results.")
+            return
+
+        # Ensure resamp has data before accessing index[0]
+        if resamp.index.size == 0:
+            logging.warning("resamp index is empty. Cannot proceed with upsample.")
+            return
+
+        # Log the state of self.data before slicing
+        logging.debug("State of self.data before slicing with resamp index:")
+        logging.debug(self.data)
+
+        data = self.data.loc[resamp.index[0]:].copy()
         data["position"] = resamp.position.shift()
-        data = data.loc[resamp.index[0]:].copy()
         data.position = data.position.shift(-1).ffill()
         data.dropna(inplace=True)
+        logging.debug("State of data after upsample:")
+        logging.debug(data)
+
         self.results = data
-            
+    
     def plot_results(self, leverage = False):
         ''' Plots the performance of the trading strategy and compares to "buy and hold".
         '''
@@ -237,6 +273,9 @@ class BollBacktester():
             performance metric to be optimized (can be: "Multiple", "Sharpe", "Sortino", "Calmar", "Kelly")
         '''
         
+        logging.debug("Starting optimize_strategy method.")
+        logging.debug(f"Parameters received: freq_range={freq_range}, window_range={window_range}, dev_range={dev_range}, metric={metric}")
+
         self.metric = metric
         
         if metric == "Multiple":
@@ -259,7 +298,12 @@ class BollBacktester():
         performance = []
         for comb in combinations: 
             self.prepare_data(comb[0], comb[1], comb[2])
+            logging.debug(f"Testing combination index : freq={comb[0]}, window={comb[1]}, dev={comb[2]}")
+            logging.debug("State of self.data after prepare_data:")
+            logging.debug(self.data)
             self.upsample()
+            logging.debug("State of self.results after upsample:")
+            logging.debug(self.results)
             self.run_backtest()
             performance.append(performance_function(self.results.strategy))
     
@@ -538,3 +582,119 @@ class BollBacktester():
             return series.mean() / series.var()
     
     ############################## Performance ######################################
+    def download_recent_data(self, instrument, count=500, file_name="recent_data.csv"):
+        """
+        Downloads recent data from OANDA in the one-minute time frame, including time, price, and spread,
+        saves it in `self.data`, and exports it to a CSV file in the `data` folder on the same level as this file.
+
+        Parameters
+        ==========
+        instrument: str
+            The trading instrument (e.g., 'EUR_USD').
+        count: int, default 500
+            The number of recent data points to fetch.
+        file_name: str, default "recent_data.csv"
+            The name of the CSV file to save the data.
+        """
+        import oandapyV20
+        import oandapyV20.endpoints.instruments as instruments
+        import os
+        import configparser
+
+        try:
+            # Read the access token from the oanda.cfg file
+            config = configparser.ConfigParser()
+            config.read(os.path.join(os.path.dirname(__file__), 'oanda.cfg'))
+            api_key = config['oanda']['access_token']
+
+            # Initialize the OANDA API client
+            client = oandapyV20.API(access_token=api_key)
+
+            # Define the parameters for fetching data
+            max_rows_per_request = 5000  # Adjust based on API limits
+            data = []
+            last_time = None
+            download_count = 0  # Track the number of downloads
+
+            # Construct the file path dynamically
+            data_folder = os.path.join(os.path.dirname(__file__), 'data')
+            os.makedirs(data_folder, exist_ok=True)  # Ensure the 'data' folder exists
+            file_path = os.path.join(data_folder, file_name)
+
+            # Fetch data in batches
+            while count > 0:
+                rows_to_fetch = min(count, max_rows_per_request)
+                params = {
+                    "granularity": "M1",  # One-minute time frame
+                    "count": rows_to_fetch
+                }
+                if last_time:
+                    params["to"] = last_time  # Adjust to fetch the next batch of rows
+
+                logging.info(f"Performing download #{download_count + 1} with {rows_to_fetch} rows.")
+                logging.debug(f"Request parameters: {params}")
+                r = instruments.InstrumentsCandles(instrument=instrument, params=params)
+                client.request(r)
+                download_count += 1
+
+                # Parse the response
+                candles = r.response.get("candles", [])
+                if not candles:
+                    logging.warning("No candle data received from API.")
+                    break
+
+                batch_data = []
+                for candle in candles:
+                    try:
+                        time = pd.to_datetime(candle["time"]).strftime('%Y-%m-%d %H:%M:%S')  # Reformat time
+                        price = (float(candle["mid"]["o"])+float(candle["mid"]["c"]))/2  # Average of open and close
+                        spread = float(candle.get("ask", {}).get("c", 0)) - float(candle.get("bid", {}).get("c", 0))  # Spread
+                        batch_data.append({"time": time, "price": price, "spread": spread})
+                    except KeyError as e:
+                        logging.warning(f"Missing field in candle data: {e}")
+
+                # Update last_time to the timestamp of the first candle in the batch
+                if candles:
+                    last_time = pd.to_datetime(candles[0]["time"]).strftime('%Y-%m-%dT%H:%M:%SZ')
+                    logging.debug(f"Updated last_time to: {last_time}")
+                else:
+                    logging.warning("No new data received. Breaking the loop.")
+                    break
+
+                count -= rows_to_fetch
+
+                # Convert batch data to a DataFrame and append to the file
+                batch_df = pd.DataFrame(batch_data)
+                batch_df["time"] = pd.to_datetime(batch_df["time"])
+                batch_df.set_index("time", inplace=True)
+                batch_df["returns"] = np.log(batch_df["price"] / batch_df["price"].shift(1))
+
+                # Deduplicate rows before appending
+                if os.path.exists(file_path):
+                    existing_data = pd.read_csv(file_path, parse_dates=["time"], index_col="time")
+                    batch_df = batch_df[~batch_df.index.isin(existing_data.index)]
+
+                # Append to the CSV file
+                if os.path.exists(file_path):
+                    batch_df.to_csv(file_path, mode='a', header=False)
+                else:
+                    batch_df.to_csv(file_path)
+
+                logging.info(f"Batch of {len(batch_df)} rows successfully appended to {file_path}")
+
+                # Append batch data to self.data
+                data.extend(batch_data)
+
+            # Log the total number of downloads
+            logging.info(f"Total downloads performed: {download_count}")
+
+            # Log the state of the data
+            self.data = pd.DataFrame(data)
+            logging.debug("State of self.data after processing:")
+            logging.debug(self.data.head())
+
+        except Exception as e:
+            logging.error(f"An error occurred while downloading data: {e}")
+            raise
+
+        logging.debug("Finished download_recent_data method.")
