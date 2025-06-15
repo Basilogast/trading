@@ -666,8 +666,8 @@ class BollBacktester():
                 # Convert batch data to a DataFrame and append to the file
                 batch_df = pd.DataFrame(batch_data)
                 batch_df["time"] = pd.to_datetime(batch_df["time"])
-                batch_df.set_index("time", inplace=True)
-                batch_df["returns"] = np.log(batch_df["price"] / batch_df["price"].shift(1))
+                batch_df.set_index("time", inplace=True)  # Ensure DatetimeIndex
+                batch_df["returns"] = np.log(batch_df["price"] / batch_df["price"].shift(1))  # Add returns column
 
                 # Deduplicate rows before appending
                 if os.path.exists(file_path):
@@ -690,6 +690,9 @@ class BollBacktester():
 
             # Log the state of the data
             self.data = pd.DataFrame(data)
+            self.data["time"] = pd.to_datetime(self.data["time"])  # Ensure DatetimeIndex for self.data
+            self.data.set_index("time", inplace=True)
+            self.data["returns"] = np.log(self.data["price"] / self.data["price"].shift(1))  # Add returns column to self.data
             logging.debug("State of self.data after processing:")
             logging.debug(self.data.head())
 
