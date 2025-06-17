@@ -136,20 +136,17 @@ class BollBacktester():
         data = self.data.price.to_frame().copy()
         freq = "{}min".format(freq)
         resamp = data.resample(freq).last().dropna().iloc[:-1]
-        logging.debug(f"Data after resampling: {len(resamp)} rows")
         
         ######### INSERT THE STRATEGY SPECIFIC CODE HERE ##################
         resamp["SMA"] = resamp["price"].rolling(window).mean()
         resamp["Lower"] = resamp["SMA"] - resamp["price"].rolling(window).std() * dev
         resamp["Upper"] = resamp["SMA"] + resamp["price"].rolling(window).std() * dev
-        logging.debug(f"Data after rolling calculations: {len(resamp)} rows")
         
         resamp["distance"] = resamp.price - resamp.SMA
         resamp["position"] = np.where(resamp.price < resamp.Lower, 1, np.nan)
         resamp["position"] = np.where(resamp.price > resamp.Upper, -1, resamp["position"])
         resamp["position"] = np.where(resamp.distance * resamp.distance.shift(1) < 0, 0, resamp["position"])
         resamp["position"] = resamp.position.ffill().fillna(0)
-        logging.debug(f"Data after filling positions: {len(resamp)} rows")
         ###################################################################
 
         resamp.dropna(inplace = True)
@@ -186,10 +183,10 @@ class BollBacktester():
             self.results.to_csv(file_path)
             print(f"Resampled data successfully exported to {file_path}")
         except Exception as e:
-            logging.error(f"An unexpected error occurred: {e}")
+            # logging.error(f"An unexpected error occurred: {e}")
             raise
 
-        logging.debug("Finished prepare_data method.")
+        # logging.debug("Finished prepare_data method.")
 
     def run_backtest(self):
         ''' Runs the strategy backtest.
@@ -208,39 +205,51 @@ class BollBacktester():
         
     def upsample(self):
         ''' Upsamples/copies trading positions back to higher frequency. '''
-        logging.debug("Entering upsample function.")
-        logging.debug("State of self.results before creating resamp:")
-        logging.debug(self.results)
+        # logging.debug("Entering upsample function.")
+        # logging.debug("State of self.results before creating resamp:")
+        # logging.debug(self.results)
 
         if self.results.empty:
-            logging.warning("self.results is empty. Cannot create resamp.")
+            # logging.warning("self.results is empty. Cannot create resamp.")
             return
 
         resamp = self.results.copy()
-        logging.debug("State of resamp after copying self.results:")
-        logging.debug(resamp)
+        # logging.debug("State of resamp after copying self.results:")
+        # logging.debug(resamp)
 
         if resamp.empty:
-            logging.warning("resamp is empty after copying self.results.")
+            # logging.warning("resamp is empty after copying self.results.")
             return
 
         # Ensure resamp has data before accessing index[0]
         if resamp.index.size == 0:
-            logging.warning("resamp index is empty. Cannot proceed with upsample.")
+            # logging.warning("resamp index is empty. Cannot proceed with upsample.")
             return
 
-        # Log the state of self.data before slicing
-        logging.debug("State of self.data before slicing with resamp index:")
-        logging.debug(self.data)
+        try:
+            # logging.debug("State of self.data before slicing with resamp index:")
+            # logging.debug(self.data)
 
-        data = self.data.loc[resamp.index[0]:].copy()
-        data["position"] = resamp.position.shift()
-        data.position = data.position.shift(-1).ffill()
-        data.dropna(inplace=True)
-        logging.debug("State of data after upsample:")
-        logging.debug(data)
+            # Ensure alignment between resamp and self.data indices
+            aligned_index = self.data.index.union(resamp.index)
+            self.data = self.data.reindex(aligned_index).ffill()  # Forward fill missing values
 
-        self.results = data
+            # Slice self.data using resamp index
+            data = self.data.loc[resamp.index[0]:].copy()
+            data["position"] = resamp.position.shift()
+            data.position = data.position.shift(-1).ffill()
+
+            self.results = data
+            # logging.debug("State of self.results after upsample:")
+            # logging.debug(self.results)
+
+        except KeyError as e:
+            # logging.error(f"KeyError during upsample: {e}")
+            raise
+
+        except Exception as e:
+            # logging.error(f"An error occurred during upsample: {e}")
+            raise
     
     def plot_results(self, leverage = False):
         ''' Plots the performance of the trading strategy and compares to "buy and hold".
@@ -273,8 +282,8 @@ class BollBacktester():
             performance metric to be optimized (can be: "Multiple", "Sharpe", "Sortino", "Calmar", "Kelly")
         '''
         
-        logging.debug("Starting optimize_strategy method.")
-        logging.debug(f"Parameters received: freq_range={freq_range}, window_range={window_range}, dev_range={dev_range}, metric={metric}")
+        # logging.debug("Starting optimize_strategy method.")
+        # logging.debug(f"Parameters received: freq_range={freq_range}, window_range={window_range}, dev_range={dev_range}, metric={metric}")
 
         self.metric = metric
         
@@ -298,12 +307,12 @@ class BollBacktester():
         performance = []
         for comb in combinations: 
             self.prepare_data(comb[0], comb[1], comb[2])
-            logging.debug(f"Testing combination index : freq={comb[0]}, window={comb[1]}, dev={comb[2]}")
-            logging.debug("State of self.data after prepare_data:")
-            logging.debug(self.data)
+            # logging.debug(f"Testing combination index : freq={comb[0]}, window={comb[1]}, dev={comb[2]}")
+            # logging.debug("State of self.data after prepare_data:")
+            # logging.debug(self.data)
             self.upsample()
-            logging.debug("State of self.results after upsample:")
-            logging.debug(self.results)
+            # logging.debug("State of self.results after upsample:")
+            # logging.debug(self.results)
             self.run_backtest()
             performance.append(performance_function(self.results.strategy))
     
@@ -330,12 +339,22 @@ class BollBacktester():
         if self.results_overview is None:
             print("Run optimize_strategy() first.")
         else: 
-            matrix = self.results_overview.pivot(index = "Freq", columns = "Windows", values = "Performance")
-            
-            plt.figure(figsize=(12,8))
-            sns.set_theme(font_scale=1.5)
-            sns.heatmap(matrix, cmap = "RdYlGn", robust = True, cbar_kws = {"label": "{}".format(self.metric)})
-            plt.show()
+            # Remove duplicate entries by aggregating Performance
+            self.results_overview = self.results_overview.groupby(["Freq", "Windows"], as_index=False).agg({"Performance": "mean"})
+
+            # Reset index to ensure no duplicate index issues
+            self.results_overview.reset_index(drop=True, inplace=True)
+
+            # Diagnostic check for uniqueness
+            if not self.results_overview.duplicated(subset=["Freq", "Windows"]).any():
+                matrix = self.results_overview.pivot(index="Freq", columns="Windows", values="Performance")
+
+                plt.figure(figsize=(12, 8))
+                sns.set_theme(font_scale=1.5)
+                sns.heatmap(matrix, cmap="RdYlGn", robust=True, cbar_kws={"label": "{}".format(self.metric)})
+                plt.show()
+            else:
+                print("Error: Duplicate entries still exist after aggregation.")
             
     def add_sessions(self, visualize = False):
         ''' 
@@ -631,8 +650,8 @@ class BollBacktester():
                 if last_time:
                     params["to"] = last_time  # Adjust to fetch the next batch of rows
 
-                logging.info(f"Performing download #{download_count + 1} with {rows_to_fetch} rows.")
-                logging.debug(f"Request parameters: {params}")
+                # logging.info(f"Performing download #{download_count + 1} with {rows_to_fetch} rows.")
+                # logging.debug(f"Request parameters: {params}")
                 r = instruments.InstrumentsCandles(instrument=instrument, params=params)
                 client.request(r)
                 download_count += 1
@@ -640,7 +659,7 @@ class BollBacktester():
                 # Parse the response
                 candles = r.response.get("candles", [])
                 if not candles:
-                    logging.warning("No candle data received from API.")
+                    # logging.warning("No candle data received from API.")
                     break
 
                 batch_data = []
@@ -651,14 +670,15 @@ class BollBacktester():
                         spread = float(candle.get("ask", {}).get("c", 0)) - float(candle.get("bid", {}).get("c", 0))  # Spread
                         batch_data.append({"time": time, "price": price, "spread": spread})
                     except KeyError as e:
-                        logging.warning(f"Missing field in candle data: {e}")
+                        # logging.warning(f"Missing field in candle data: {e}")
+                        pass
 
                 # Update last_time to the timestamp of the first candle in the batch
                 if candles:
                     last_time = pd.to_datetime(candles[0]["time"]).strftime('%Y-%m-%dT%H:%M:%SZ')
-                    logging.debug(f"Updated last_time to: {last_time}")
+                    # logging.debug(f"Updated last_time to: {last_time}")
                 else:
-                    logging.warning("No new data received. Breaking the loop.")
+                    # logging.warning("No new data received. Breaking the loop.")
                     break
 
                 count -= rows_to_fetch
@@ -680,24 +700,24 @@ class BollBacktester():
                 else:
                     batch_df.to_csv(file_path)
 
-                logging.info(f"Batch of {len(batch_df)} rows successfully appended to {file_path}")
+                # logging.info(f"Batch of {len(batch_df)} rows successfully appended to {file_path}")
 
                 # Append batch data to self.data
                 data.extend(batch_data)
 
             # Log the total number of downloads
-            logging.info(f"Total downloads performed: {download_count}")
+            # logging.info(f"Total downloads performed: {download_count}")
 
             # Log the state of the data
             self.data = pd.DataFrame(data)
             self.data["time"] = pd.to_datetime(self.data["time"])  # Ensure DatetimeIndex for self.data
             self.data.set_index("time", inplace=True)
             self.data["returns"] = np.log(self.data["price"] / self.data["price"].shift(1))  # Add returns column to self.data
-            logging.debug("State of self.data after processing:")
-            logging.debug(self.data.head())
+            # logging.debug("State of self.data after processing:")
+            # logging.debug(self.data.head())
 
         except Exception as e:
-            logging.error(f"An error occurred while downloading data: {e}")
+            # logging.error(f"An error occurred while downloading data: {e}")
             raise
 
-        logging.debug("Finished download_recent_data method.")
+        # logging.debug("Finished download_recent_data method.")
