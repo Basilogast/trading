@@ -98,6 +98,32 @@ class BollBacktester():
         raw["returns"] = np.log(raw.price / raw.price.shift(1))
         self.data = raw
         
+    def get_data_oanda(self, filepath, start_date, end_date):
+        '''
+        Imports the data based on a date range and a specified file path.
+
+        Parameters
+        ==========
+        filepath: str
+            Path to the CSV file containing the data.
+        start_date: str
+            Start date for the data (format: 'YYYY-MM-DD').
+        end_date: str
+            End date for the data (format: 'YYYY-MM-DD').
+        '''
+        # Read the CSV file
+        raw = pd.read_csv(filepath, parse_dates=["time"], index_col="time")
+
+        # Filter data based on the date range
+        raw = raw.loc[start_date:end_date].copy()
+
+        # Rename the price column and calculate returns
+        raw.rename(columns={"price": "price"}, inplace=True)
+        raw["returns"] = np.log(raw.price / raw.price.shift(1))
+
+        # Save the filtered data to self.data
+        self.data = raw
+
     def test_strategy(self, freq = 60, window = 50, dev = 2): # Adj!!!
         '''
         Prepares the data and backtests the trading strategy incl. reporting (Wrapper).
@@ -193,6 +219,11 @@ class BollBacktester():
         '''
         
         data = self.results.copy()
+
+        # Ensure the 'returns' column exists
+        if "returns" not in data.columns:
+            data["returns"] = np.log(data["price"] / data["price"].shift(1))
+
         data["strategy"] = data["position"].shift(1) * data["returns"]
         
         # determine the number of trades in each bar
@@ -301,9 +332,15 @@ class BollBacktester():
         freqs = range(*freq_range)  
         windows = range(*window_range)
         devs = np.arange(*dev_range) # NEW!!!
-        
+
+        # Debugging: Print the devs range
+        print("Devs range:", list(devs))
+
         combinations = list(product(freqs, windows, devs)) 
-        
+
+        # Debugging: Print the first few combinations
+        print("First 5 combinations:", combinations[:5])
+
         performance = []
         for comb in combinations: 
             self.prepare_data(comb[0], comb[1], comb[2])
@@ -316,8 +353,15 @@ class BollBacktester():
             self.run_backtest()
             performance.append(performance_function(self.results.strategy))
     
-        self.results_overview =  pd.DataFrame(data = np.array(combinations),
-                                              columns = ["Freq", "Windows", "Devs"])
+        self.results_overview = pd.DataFrame(
+            data=np.array(combinations),
+            columns=["Freq", "Windows", "Devs"]  # Ensure "Devs" is included here
+        )
+
+        # Debugging: Print the results_overview DataFrame
+        print("Results overview head:")
+        print(self.results_overview.head())
+
         self.results_overview["Performance"] = performance
         self.find_best_strategy()
         
@@ -333,28 +377,33 @@ class BollBacktester():
         self.test_strategy(freq, window, dev) 
         
     def visualize_many(self):
-        ''' Plots parameter values vs. Performance.
+        ''' Plots parameter values vs. Performance, ensuring uniqueness of Freq, Windows, and Devs.
         '''
 
         if self.results_overview is None:
             print("Run optimize_strategy() first.")
         else: 
-            # Remove duplicate entries by aggregating Performance
-            self.results_overview = self.results_overview.groupby(["Freq", "Windows"], as_index=False).agg({"Performance": "mean"})
+            # Ensure 'Devs' is included in the aggregation
+            self.results_overview = self.results_overview.groupby(["Freq", "Windows", "Devs"], as_index=False).agg({"Performance": "mean"})
 
             # Reset index to ensure no duplicate index issues
             self.results_overview.reset_index(drop=True, inplace=True)
 
-            # Diagnostic check for uniqueness
-            if not self.results_overview.duplicated(subset=["Freq", "Windows"]).any():
-                matrix = self.results_overview.pivot(index="Freq", columns="Windows", values="Performance")
+            # Diagnostic: Print DataFrame info and first few rows
+            # print("DataFrame Info:")
+            # print(self.results_overview.info())
+            # print("First few rows of the DataFrame:")
+            # print(self.results_overview.head())
 
-                plt.figure(figsize=(12, 8))
-                sns.set_theme(font_scale=1.5)
-                sns.heatmap(matrix, cmap="RdYlGn", robust=True, cbar_kws={"label": "{}".format(self.metric)})
-                plt.show()
-            else:
-                print("Error: Duplicate entries still exist after aggregation.")
+            # Pivot the data for heatmap, considering Freq, Windows, and Devs for uniqueness
+            matrix = self.results_overview.pivot_table(index="Freq", columns=["Windows", "Devs"], values="Performance")
+            # print("Pivot operation successful. Matrix shape:", matrix.shape)
+
+            plt.figure(figsize=(12, 8))
+            sns.set_theme(font_scale=1.5)
+            sns.heatmap(matrix, cmap="RdYlGn", robust=True, cbar_kws={"label": "{}".format(self.metric)})
+            plt.title("Performance Heatmap (Unique Freq, Windows, and Devs)")
+            plt.show()
             
     def add_sessions(self, visualize = False):
         ''' 
@@ -716,6 +765,11 @@ class BollBacktester():
             # logging.debug("State of self.data after processing:")
             # logging.debug(self.data.head())
 
+            # Sort the final data in chronological order
+            self.data.sort_index(inplace=True)
+
+            # Save the sorted data back to the CSV file
+            self.data.to_csv(file_path)
         except Exception as e:
             # logging.error(f"An error occurred while downloading data: {e}")
             raise
