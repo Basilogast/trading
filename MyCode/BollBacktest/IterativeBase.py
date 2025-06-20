@@ -9,7 +9,7 @@ class IterativeBase():
     ''' Base class for iterative (event-driven) backtesting of trading strategies.
     '''
 
-    def __init__(self, symbol, start, end, amount, use_spread = True):
+    def __init__(self, symbol, start, end, amount, file_path, use_spread = True):
         '''
         Parameters
         ----------
@@ -21,6 +21,8 @@ class IterativeBase():
             end date for data import
         amount: float
             initial amount to be invested per trade
+        file_path: str
+            path to the CSV file containing historical data
         use_spread: boolean (default = True) 
             whether trading costs (bid-ask spread) are included
         '''
@@ -33,19 +35,17 @@ class IterativeBase():
         self.trades = 0
         self.position = 0
         self.use_spread = use_spread
+        self.file_path = file_path
         self.get_data()
     
     def get_data(self):
-        ''' Loads historical data from a CSV file using a dynamic path. '''
+        ''' Loads historical data from a CSV file provided as input. '''
 
-        # Construct the dynamic file path
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        file_path = os.path.join(base_dir, "data", "GBP_recent_data_1.csv")
-        print(f"Loading data from: {file_path}")
+        print(f"Loading data from: {self.file_path}")
         print(f"Date range: {self.start} to {self.end}")
 
         # Load the data
-        raw = pd.read_csv(file_path, parse_dates=["time"], index_col="time").dropna()
+        raw = pd.read_csv(self.file_path, parse_dates=["time"], index_col="time").dropna()
         print(f"Data loaded. Total rows before filtering: {len(raw)}")
 
         # Filter data by date range
