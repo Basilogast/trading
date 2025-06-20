@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 plt.style.use("seaborn-v0_8")
 
 
@@ -35,12 +36,19 @@ class IterativeBase():
         self.get_data()
     
     def get_data(self):
-        ''' Imports the data from detailed.csv (source can be changed).
-        '''
-        print(f"Loading data from: one_minute_resampled_data.csv")
+        ''' Loads historical data from a CSV file using a dynamic path. '''
+
+        # Construct the dynamic file path
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(base_dir, "data", "GBP_recent_data_1.csv")
+        print(f"Loading data from: {file_path}")
         print(f"Date range: {self.start} to {self.end}")
-        raw = pd.read_csv("../data/one_minute_resampled_data.csv", parse_dates=["time"], index_col="time").dropna()
+
+        # Load the data
+        raw = pd.read_csv(file_path, parse_dates=["time"], index_col="time").dropna()
         print(f"Data loaded. Total rows before filtering: {len(raw)}")
+
+        # Filter data by date range
         raw = raw.loc[self.start:self.end].copy()
         print(f"Total rows after filtering by date range: {len(raw)}")
         if raw.empty:
