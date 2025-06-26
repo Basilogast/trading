@@ -154,30 +154,40 @@ class PivotPointBacktester():
         
         self.print_performance()
     
-    def prepare_data(self, freq, window, dev): # Adj!!!
+    def prepare_data(self): # Adj!!!
         ''' Prepares the Data for Backtesting.
         '''
         # Ensure the time column is in datetime format and set as the index
+        data = self.data.copy()
+        # Convert index to US/Eastern if not already
+        if data.index.tz is None or str(data.index.tz) != 'US/Eastern':
+            if data.index.tz is None:
+                data.index = data.index.tz_localize('UTC').tz_convert('US/Eastern')
+            else:
+                data.index = data.index.tz_convert('US/Eastern')
 
-        data = self.data.price.to_frame().copy()
-        freq = "{}min".format(freq)
-        resamp = data.resample(freq).last().dropna().iloc[:-1]
-        
-        ######### INSERT THE STRATEGY SPECIFIC CODE HERE ##################
-        resamp["SMA"] = resamp["price"].rolling(window).mean()
-        resamp["Lower"] = resamp["SMA"] - resamp["price"].rolling(window).std() * dev
-        resamp["Upper"] = resamp["SMA"] + resamp["price"].rolling(window).std() * dev
-        
-        resamp["distance"] = resamp.price - resamp.SMA
-        resamp["position"] = np.where(resamp.price < resamp.Lower, 1, np.nan)
-        resamp["position"] = np.where(resamp.price > resamp.Upper, -1, resamp["position"])
-        resamp["position"] = np.where(resamp.distance * resamp.distance.shift(1) < 0, 0, resamp["position"])
-        resamp["position"] = resamp.position.ffill().fillna(0)
-        ###################################################################
+        # Resample close to daily (NY Close)
+        close = data['Close'].to_frame().copy() if 'Close' in data.columns else data['price'].to_frame().copy()
+        close_daily = close.resample('D', offset='17h').last().dropna()
 
-        resamp.dropna(inplace = True)
-        self.results = resamp
-        return resamp 
+        # OHLC resample to daily
+        agg_dict = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
+        # If OHLC columns exist, use them; else, use price for all
+        if all(col in data.columns for col in ["Open", "High", "Low", "Close"]):
+            ohlc_daily = data[["Open", "High", "Low", "Close"]].resample('D', offset='17h').agg(agg_dict).dropna()
+        else:
+            ohlc_daily = data[["price"]].rename(columns={"price": "Open"})
+            ohlc_daily["High"] = ohlc_daily["Open"]
+            ohlc_daily["Low"] = ohlc_daily["Open"]
+            ohlc_daily["Close"] = ohlc_daily["Open"]
+            ohlc_daily = ohlc_daily.resample('D', offset='17h').agg(agg_dict).dropna()
+
+        daily_data = ohlc_daily.copy()
+        daily_data.columns = ["Open_d", "High_d", "Low_d", "Close_d"]
+
+        # Merge intraday and daily data
+        merged = pd.concat([data, daily_data.shift().dropna()], axis=1).ffill().dropna()
+        return merged
     
 
     def export_resampled_data(self, freq, window, dev, file_name):
@@ -694,7 +704,8 @@ class PivotPointBacktester():
                 rows_to_fetch = min(count, max_rows_per_request)
                 params = {
                     "granularity": "M1",  # One-minute time frame
-                    "count": rows_to_fetch
+                    "count": rows_to_fetch,
+                    "price": "MBA"  # Request mid, bid, and ask prices for spread calculation
                 }
                 if last_time:
                     params["to"] = last_time  # Adjust to fetch the next batch of rows
@@ -715,9 +726,21 @@ class PivotPointBacktester():
                 for candle in candles:
                     try:
                         time = pd.to_datetime(candle["time"]).strftime('%Y-%m-%d %H:%M:%S')  # Reformat time
-                        price = (float(candle["mid"]["o"])+float(candle["mid"]["c"]))/2  # Average of open and close
+                        open_price = float(candle["mid"]["o"])
+                        high_price = float(candle["mid"]["h"])
+                        low_price = float(candle["mid"]["l"])
+                        close_price = float(candle["mid"]["c"])
+                        price = (open_price + close_price) / 2  # Average of open and close
                         spread = float(candle.get("ask", {}).get("c", 0)) - float(candle.get("bid", {}).get("c", 0))  # Spread
-                        batch_data.append({"time": time, "price": price, "spread": spread})
+                        batch_data.append({
+                            "time": time,
+                            "price": price,
+                            "Open": open_price,
+                            "High": high_price,
+                            "Low": low_price,
+                            "Close": close_price,
+                            "spread": spread
+                        })
                     except KeyError as e:
                         # logging.warning(f"Missing field in candle data: {e}")
                         pass
