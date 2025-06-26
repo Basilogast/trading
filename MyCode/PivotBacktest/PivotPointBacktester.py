@@ -11,7 +11,7 @@ plt.style.use("seaborn-v0_8")
 # Initialize logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class BollBacktester():
+class PivotPointBacktester():
     ''' Class for the vectorized backtesting of Bollinger Bands trading strategies.
     
     Attributes
