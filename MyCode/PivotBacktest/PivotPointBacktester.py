@@ -187,6 +187,20 @@ class PivotPointBacktester():
 
         # Merge intraday and daily data
         merged = pd.concat([data, daily_data.shift().dropna()], axis=1).ffill().dropna()
+
+        # Calculate Pivot Point and S/R levels
+        merged["PP"] = (merged["High_d"] + merged["Low_d"] + merged["Close_d"]) / 3
+        merged["S1"] = merged["PP"] * 2 - merged["High_d"]
+        merged["S2"] = merged["PP"] - (merged["High_d"] - merged["Low_d"])
+        merged["R1"] = merged["PP"] * 2 - merged["Low_d"]
+        merged["R2"] = merged["PP"] + (merged["High_d"] - merged["Low_d"])
+
+        # Position logic
+        merged["position"] = np.where(merged["Open"] > merged["PP"], 1, -1)
+        merged["position"] = np.where(merged["Open"] >= merged["R1"], 0, merged["position"])
+        merged["position"] = np.where(merged["Open"] <= merged["S1"], 0, merged["position"])
+        merged["position"] = merged["position"].fillna(0)
+
         return merged
     
 
