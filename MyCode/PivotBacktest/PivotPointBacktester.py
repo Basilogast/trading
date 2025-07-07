@@ -124,34 +124,23 @@ class PivotPointBacktester():
         # Save the filtered data to self.data
         self.data = raw
 
-    def test_strategy(self, freq = 60, window = 50, dev = 2): # Adj!!!
+    def test_strategy(self):
         '''
-        Prepares the data and backtests the trading strategy incl. reporting (Wrapper).
-         
-        Parameters
-        ============
-        freq: int
-            data frequency/granularity to work with (in minutes)
-        
-        window: int
-            time window (number of bars) to calculate the simple moving average price (SMA).
-            
-        dev: int
-            number of standard deviations to calculate upper and lower bands.
+        Prepares the data and backtests the simple pivot point trading strategy (no parameters).
         '''
-        self.freq = "{}min".format(freq) 
-        self.window = window
-        self.dev = dev # NEW!!!
-                                
-        self.prepare_data(freq, window, dev) 
-        self.upsample() 
-        self.run_backtest()
-        
+        # Prepare data (assume prepare_data already sets up everything needed)
+        self.prepare_data()
         data = self.results.copy()
+
+        # Calculate trades and returns
+        data["trades"] = data.position.diff().fillna(0).abs()
+        ptc = self.tc if hasattr(self, 'tc') else 0.0
+        data["strategy"] = data.position * data["returns"]
+        data["strategy_net"] = data.strategy - data.trades * ptc
         data["creturns"] = data["returns"].cumsum().apply(np.exp)
         data["cstrategy"] = data["strategy"].cumsum().apply(np.exp)
+        data["cstrategy_net"] = data["strategy_net"].cumsum().apply(np.exp)
         self.results = data
-        
         self.print_performance()
     
     def prepare_data(self): # Adj!!!
@@ -201,6 +190,7 @@ class PivotPointBacktester():
         merged["position"] = np.where(merged["Open"] <= merged["S1"], 0, merged["position"])
         merged["position"] = merged["position"].fillna(0)
 
+        self.results = merged  # Save merged data to self.results for run_backtest
         return merged
     
 
@@ -244,11 +234,7 @@ class PivotPointBacktester():
         
         data = self.results.copy()
 
-        # Ensure the 'returns' column exists
-        if "returns" not in data.columns:
-            data["returns"] = np.log(data["price"] / data["price"].shift(1))
-
-        data["strategy"] = data["position"].shift(1) * data["returns"]
+        data["strategy"] = data["position"] * data["returns"]
         
         # determine the number of trades in each bar
         data["trades"] = data.position.diff().fillna(0).abs()
@@ -371,7 +357,7 @@ class PivotPointBacktester():
             # logging.debug(f"Testing combination index : freq={comb[0]}, window={comb[1]}, dev={comb[2]}")
             # logging.debug("State of self.data after prepare_data:")
             # logging.debug(self.data)
-            self.upsample()
+            # self.upsample()
             # logging.debug("State of self.results after upsample:")
             # logging.debug(self.results)
             self.run_backtest()
@@ -565,8 +551,7 @@ class PivotPointBacktester():
     ############################## Performance ######################################
     
     def print_performance(self, leverage = False):
-        ''' Calculates and prints various Performance Metrics.
-        '''
+        ''' Calculates and prints various Performance Metrics. '''
         
         data = self.results.copy()
         
@@ -589,7 +574,7 @@ class PivotPointBacktester():
         kelly_criterion =   round(self.calculate_kelly_criterion(to_analyze), 6)
         
         print(100 * "=")
-        print("SIMPLE BOLLINGER BAND STRATEGY | INSTRUMENT = {} | Freq: {} | WINDOW = {}".format(self.symbol, self.freq, self.window))
+        print(f"SIMPLE PIVOT POINT STRATEGY | INSTRUMENT = {self.symbol}")
         print(100 * "-")
         #print("\n")
         print("PERFORMANCE MEASURES:")
