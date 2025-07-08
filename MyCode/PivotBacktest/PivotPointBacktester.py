@@ -417,17 +417,17 @@ class PivotPointBacktester():
             
     def add_sessions(self, visualize = False):
         ''' 
-        Adds/Labels Trading Sessions and their compound returns.
+        Adds/Labels Trading Sessions and their compound returns, preserving all columns.
         
         Parameter
-        ============
+        ===========
         visualize: bool, default False
             if True, visualize compound session returns over time
         '''
-        
         if self.results is None:
             print("Run test_strategy() first.")
-            
+            return
+
         data = self.results.copy()
         data["session"] = np.sign(data.trades).cumsum().shift().fillna(0)
         data["session_compound"] = data.groupby("session").strategy.cumsum().apply(np.exp) - 1
@@ -514,40 +514,39 @@ class PivotPointBacktester():
         else:
             return group
         
-    def add_leverage(self, leverage, sl = -0.5, report = True):
+    def add_leverage(self, leverage, sl=None, report=True):
         ''' 
         Adds Leverage to the Strategy.
         
         Parameter
-        ============
+        ===========
         leverage: float (positive)
             degree of leverage.
-        
-        sl: float (negative), default -50% (regulatory)
-            maximum margin loss level in % (e.g. -0.2 for -20%).
-        
+        sl: float (negative), optional
+            maximum margin loss level in % (e.g. -0.2 for -20%). If None, no stop loss is applied.
         report: bool, default True
             if True, print Performance Report incl. Leverage.
         '''
-        
         self.leverage = leverage
-        sl_thresh = sl / leverage
-        self.add_stop_loss(sl_thresh, report = False)
-        
-        data = self.results.copy()
-        data["simple_ret"] = np.exp(data.strategy) - 1
-        data["eff_lev"] = leverage * (1 + data.session_compound) / (1 + data.session_compound * leverage)
-        data["eff_lev"] = data.eff_lev.fillna(leverage)
-        data.loc[data.trades !=0, "eff_lev"] = leverage
-        levered_returns = data.eff_lev.shift() * data.simple_ret
-        levered_returns = np.where(levered_returns < -1, -1, levered_returns)
-        data["strategy_levered"] = levered_returns
-        data["cstrategy_levered"] = data.strategy_levered.add(1).cumprod()
-        
+
+        # Only apply stop loss if sl is not None
+        if sl is not None:
+            sl_thresh = sl / leverage
+            self.add_stop_loss(sl_thresh, report=False)
+            data = self.results.copy()
+        else:
+            data = self.results.copy()
+
+        # Leverage logic: simply multiply log returns by leverage
+        # If leverage == 1, this is identical to the original strategy
+        data["strategy_levered"] = leverage * data["strategy"]
+        # Optionally cap losses at -100% (log(-1) is undefined, so cap at -1)
+        data["strategy_levered"] = np.where(data["strategy_levered"] < -1, -1, data["strategy_levered"])
+        data["cstrategy_levered"] = data["strategy_levered"].cumsum().apply(np.exp)
+
         self.results = data
-            
         if report:
-            self.print_performance(leverage = True)
+            self.print_performance(leverage=True)
     ############################## Performance ######################################
     
     def print_performance(self, leverage = False):
