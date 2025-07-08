@@ -174,10 +174,12 @@ class IterativeBacktest(IterativeBase):
 
         Pivot Point and S/R levels are calculated from previous day's OHLC.
         '''
+        stm = f"Testing Pivot Point Strategy | {self.symbol}"
         print("-" * 75)
-        print(f"Testing Pivot Point Strategy | {self.symbol}")
+        print(stm)
         print("-" * 75)
 
+        # reset 
         self.position = 0
         self.trades = 0
         self.current_balance = self.initial_balance
@@ -199,25 +201,29 @@ class IterativeBacktest(IterativeBase):
         data["S1"] = data["PP"] * 2 - data["High_d"]
         data["R1"] = data["PP"] * 2 - data["Low_d"]
 
+        fixed_amount = 10000  # Use a fixed amount per trade instead of "all"
         for bar in range(len(data) - 1):
             open_ = data["Open"].iloc[bar]
             pp = data["PP"].iloc[bar]
             r1 = data["R1"].iloc[bar]
             s1 = data["S1"].iloc[bar]
+            # Go long only if not already long
             if open_ > pp and open_ < r1:
-                if self.position in [0, -1]:
-                    self.go_long(bar, amount="all")
+                if self.position != 1:
+                    self.go_long(bar, amount=fixed_amount)
                     self.position = 1
+            # Go short only if not already short
             elif open_ < pp and open_ > s1:
-                if self.position in [0, 1]:
-                    self.go_short(bar, amount="all")
+                if self.position != -1:
+                    self.go_short(bar, amount=fixed_amount)
                     self.position = -1
-            else:  # Open >= R1 or Open <= S1: go neutral
+            # Go neutral only if not already neutral
+            else:
                 if self.position == 1:
-                    self.go_short(bar, units=self.units)  # close long
+                    self.go_short(bar, units=self.units)
                     self.position = 0
                 elif self.position == -1:
-                    self.go_long(bar, units=-self.units)  # close short
+                    self.go_long(bar, units=-self.units)
                     self.position = 0
         self.close_pos(bar + 1)
         
