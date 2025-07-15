@@ -44,15 +44,8 @@ class FindingBacktester():
         implements a brute force optimization for the two EMA parameters
     '''
     
-    def __init__(self, symbol, EMA_S, EMA_L, start, end, tc):
-        self.symbol = symbol
-        self.EMA_S = EMA_S
-        self.EMA_L = EMA_L
-        self.start = start
-        self.end = end
-        self.tc = tc
-        self.results = None 
-        self.get_data()
+    def __init__(self):
+        pass
         
     def __repr__(self):
         return "EMABacktester(symbol = {}, EMA_S = {}, EMA_L = {}, start = {}, end = {})".format(self.symbol, self.EMA_S, self.EMA_L, self.start, self.end)
@@ -132,5 +125,144 @@ class FindingBacktester():
         '''
         opt = brute(self.update_and_run, (EMA1_range, EMA2_range), finish=None)
         return opt, -self.update_and_run(opt)
+    
+    def download_recent_data(self, instrument, count=500, file_name="recent_data.csv"):
+        """
+        Downloads recent data from OANDA in the one-minute time frame, including time, price, and spread,
+        saves it in `self.data`, and exports it to a CSV file in the `data` folder on the same level as this file.
+
+        Parameters
+        ==========
+        instrument: str
+            The trading instrument (e.g., 'EUR_USD').
+        count: int, default 500
+            The number of recent data points to fetch.
+        file_name: str, default "recent_data.csv"
+            The name of the CSV file to save the data.
+        """
+        import oandapyV20
+        import oandapyV20.endpoints.instruments as instruments
+        import os
+        import configparser
+
+        try:
+            # Read the access token from the oanda.cfg file
+            config = configparser.ConfigParser()
+            config.read(os.path.join(os.path.dirname(__file__), 'oanda.cfg'))
+            api_key = config['oanda']['access_token']
+
+            # Initialize the OANDA API client
+            client = oandapyV20.API(access_token=api_key)
+
+            # Define the parameters for fetching data
+            max_rows_per_request = 5000  # Adjust based on API limits
+            data = []
+            last_time = None
+            download_count = 0  # Track the number of downloads
+
+            # Construct the file path dynamically
+            data_folder = os.path.join(os.path.dirname(__file__), 'data')
+            os.makedirs(data_folder, exist_ok=True)  # Ensure the 'data' folder exists
+            file_path = os.path.join(data_folder, file_name)
+
+            # Fetch data in batches
+            while count > 0:
+                rows_to_fetch = min(count, max_rows_per_request)
+                params = {
+                    "granularity": "M1",  # One-minute time frame
+                    "count": rows_to_fetch,
+                    "price": "MBA"  # Request mid, bid, and ask prices for spread calculation
+                }
+                if last_time:
+                    params["to"] = last_time  # Adjust to fetch the next batch of rows
+
+                # logging.info(f"Performing download #{download_count + 1} with {rows_to_fetch} rows.")
+                # logging.debug(f"Request parameters: {params}")
+                r = instruments.InstrumentsCandles(instrument=instrument, params=params)
+                client.request(r)
+                download_count += 1
+
+                # Parse the response
+                candles = r.response.get("candles", [])
+                if not candles:
+                    # logging.warning("No candle data received from API.")
+                    break
+
+                batch_data = []
+                for candle in candles:
+                    try:
+                        time = pd.to_datetime(candle["time"]).strftime('%Y-%m-%d %H:%M:%S')  # Reformat time
+                        open_price = float(candle["mid"]["o"])
+                        high_price = float(candle["mid"]["h"])
+                        low_price = float(candle["mid"]["l"])
+                        close_price = float(candle["mid"]["c"])
+                        price = (open_price + close_price) / 2  # Average of open and close
+                        spread = float(candle.get("ask", {}).get("c", 0)) - float(candle.get("bid", {}).get("c", 0))  # Spread
+                        batch_data.append({
+                            "time": time,
+                            "price": price,
+                            "Open": open_price,
+                            "High": high_price,
+                            "Low": low_price,
+                            "Close": close_price,
+                            "spread": spread
+                        })
+                    except KeyError as e:
+                        # logging.warning(f"Missing field in candle data: {e}")
+                        pass
+
+                # Update last_time to the timestamp of the first candle in the batch
+                if candles:
+                    last_time = pd.to_datetime(candles[0]["time"]).strftime('%Y-%m-%dT%H:%M:%SZ')
+                    # logging.debug(f"Updated last_time to: {last_time}")
+                else:
+                    # logging.warning("No new data received. Breaking the loop.")
+                    break
+
+                count -= rows_to_fetch
+
+                # Convert batch data to a DataFrame and append to the file
+                batch_df = pd.DataFrame(batch_data)
+                batch_df["time"] = pd.to_datetime(batch_df["time"])
+                batch_df.set_index("time", inplace=True)  # Ensure DatetimeIndex
+                batch_df["returns"] = np.log(batch_df["price"] / batch_df["price"].shift(1))  # Add returns column
+
+                # Deduplicate rows before appending
+                if os.path.exists(file_path):
+                    existing_data = pd.read_csv(file_path, parse_dates=["time"], index_col="time")
+                    batch_df = batch_df[~batch_df.index.isin(existing_data.index)]
+
+                # Append to the CSV file
+                if os.path.exists(file_path):
+                    batch_df.to_csv(file_path, mode='a', header=False)
+                else:
+                    batch_df.to_csv(file_path)
+
+                # logging.info(f"Batch of {len(batch_df)} rows successfully appended to {file_path}")
+
+                # Append batch data to self.data
+                data.extend(batch_data)
+
+            # Log the total number of downloads
+            # logging.info(f"Total downloads performed: {download_count}")
+
+            # Log the state of the data
+            self.data = pd.DataFrame(data)
+            self.data["time"] = pd.to_datetime(self.data["time"])  # Ensure DatetimeIndex for self.data
+            self.data.set_index("time", inplace=True)
+            self.data["returns"] = np.log(self.data["price"] / self.data["price"].shift(1))  # Add returns column to self.data
+            # logging.debug("State of self.data after processing:")
+            # logging.debug(self.data.head())
+
+            # Sort the final data in chronological order
+            self.data.sort_index(inplace=True)
+
+            # Save the sorted data back to the CSV file
+            self.data.to_csv(file_path)
+        except Exception as e:
+            # logging.error(f"An error occurred while downloading data: {e}")
+            raise
+
+        # logging.debug("Finished download_recent_data method.")
     
     
