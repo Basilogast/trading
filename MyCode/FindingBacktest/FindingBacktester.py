@@ -47,9 +47,6 @@ class FindingBacktester():
     def __init__(self):
         pass
         
-    def __repr__(self):
-        return "EMABacktester(symbol = {}, EMA_S = {}, EMA_L = {}, start = {}, end = {})".format(self.symbol, self.EMA_S, self.EMA_L, self.start, self.end)
-        
     def get_data(self):
         ''' Retrieves and prepares the data.
         '''
@@ -126,20 +123,7 @@ class FindingBacktester():
         opt = brute(self.update_and_run, (EMA1_range, EMA2_range), finish=None)
         return opt, -self.update_and_run(opt)
     
-    def download_recent_data(self, instrument, count=500, file_name="recent_data.csv"):
-        """
-        Downloads recent data from OANDA in the one-minute time frame, including time, price, and spread,
-        saves it in `self.data`, and exports it to a CSV file in the `data` folder on the same level as this file.
-
-        Parameters
-        ==========
-        instrument: str
-            The trading instrument (e.g., 'EUR_USD').
-        count: int, default 500
-            The number of recent data points to fetch.
-        file_name: str, default "recent_data.csv"
-            The name of the CSV file to save the data.
-        """
+    def download_recent_data(self, instrument, count=500, file_name="recent_data.csv", granularity="M1"):
         import oandapyV20
         import oandapyV20.endpoints.instruments as instruments
         import os
@@ -169,7 +153,7 @@ class FindingBacktester():
             while count > 0:
                 rows_to_fetch = min(count, max_rows_per_request)
                 params = {
-                    "granularity": "M1",  # One-minute time frame
+                    "granularity": granularity,  # Use user-specified time frame
                     "count": rows_to_fetch,
                     "price": "MBA"  # Request mid, bid, and ask prices for spread calculation
                 }
@@ -196,7 +180,7 @@ class FindingBacktester():
                         high_price = float(candle["mid"]["h"])
                         low_price = float(candle["mid"]["l"])
                         close_price = float(candle["mid"]["c"])
-                        price = (open_price + close_price) / 2  # Average of open and close
+                        price = close_price
                         spread = float(candle.get("ask", {}).get("c", 0)) - float(candle.get("bid", {}).get("c", 0))  # Spread
                         batch_data.append({
                             "time": time,
