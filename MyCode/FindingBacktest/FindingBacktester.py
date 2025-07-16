@@ -44,29 +44,29 @@ class FindingBacktester():
         implements a brute force optimization for the two EMA parameters
     '''
     
-    def __init__(self):
-        pass
+    def __init__(self, tc=None, symbol=None):
+        '''
+        Initialize the FindingBacktester.
+        Optionally set transaction cost (tc), symbol, EMA_S, and EMA_L.
+        '''
+        self.tc = tc
+        self.symbol = symbol
         
     def prepare_data_EMA_SMA(self, EMA_S=None, EMA_L=None):
-        '''Adds EMA_S and EMA_L columns to self.data. Accepts EMA_S and EMA_L as optional parameters.'''
+        '''Adds EMA_S and EMA_L columns to self.data. Accepts EMA_S and EMA_L as optional parameters. Sets them as attributes if provided.'''
         if self.data is not None:
             # Use provided parameters or fall back to instance attributes
             ema_s = EMA_S if EMA_S is not None else getattr(self, 'EMA_S', None)
             ema_l = EMA_L if EMA_L is not None else getattr(self, 'EMA_L', None)
             if ema_s is None or ema_l is None:
                 raise ValueError("EMA_S and EMA_L must be provided either as parameters or set as instance attributes.")
+            # Set as attributes if provided
+            if EMA_S is not None:
+                self.EMA_S = EMA_S
+            if EMA_L is not None:
+                self.EMA_L = EMA_L
             self.data["EMA_S"] = self.data["price"].ewm(span=ema_s, min_periods=ema_s).mean()
             self.data["EMA_L"] = self.data["price"].ewm(span=ema_l, min_periods=ema_l).mean()
-        
-    def set_parameters(self, EMA_S = None, EMA_L = None):
-        ''' Updates EMA parameters and resp. time series.
-        '''
-        if EMA_S is not None:
-            self.EMA_S = EMA_S
-            self.data["EMA_S"] = self.data["price"].ewm(span = self.EMA_S, min_periods = self.EMA_S).mean() 
-        if EMA_L is not None:
-            self.EMA_L = EMA_L
-            self.data["EMA_L"] = self.data["price"].ewm(span = self.EMA_L, min_periods = self.EMA_L).mean()
             
     def test_strategy(self):
         ''' Backtests the trading strategy.
