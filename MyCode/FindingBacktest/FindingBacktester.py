@@ -51,6 +51,16 @@ class FindingBacktester():
         '''
         self.tc = tc
         self.symbol = symbol
+    
+    def set_parameters(self, SMA = None, EMA = None):
+        ''' Updates SMA/EMA parameters and resp. time series.
+        '''
+        if SMA is not None:
+            self.SMA = SMA
+            self.data["SMA"] = self.data["price"].rolling(self.SMA).mean() 
+        if EMA is not None:
+            self.EMA = EMA
+            self.data["EMA"] = self.data["price"].ewm(span = self.EMA, min_periods = self.EMA).mean()
         
     def prepare_data_EMA_SMA(self, EMA_S=None, EMA_L=None):
         '''Adds EMA_S and EMA_L columns to self.data. Accepts EMA_S and EMA_L as optional parameters. Sets them as attributes if provided.'''
