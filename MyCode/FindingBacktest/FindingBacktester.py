@@ -5,6 +5,52 @@ from scipy.optimize import brute
 plt.style.use("seaborn-v0_8")
 
 class FindingBacktester(): 
+    def optimize_parameters_optuna(self, EMA1_range, EMA2_range, periods_range, rsi_upper_range, rsi_lower_range, metric="Multiple", n_trials=100):
+        '''
+        Optimizes EMA_S, EMA_L, RSI periods, RSI upper, RSI lower using Optuna for efficient search.
+        '''
+        import optuna
+        self.metric = metric
+        if metric == "Multiple":
+            performance_function = self.calculate_multiple
+        elif metric == "Sharpe":
+            performance_function = self.calculate_sharpe
+        elif metric == "Sortino":
+            performance_function = self.calculate_sortino
+        elif metric == "Calmar":
+            performance_function = self.calculate_calmar
+        elif metric == "Kelly":
+            performance_function = self.calculate_kelly_criterion
+        else:
+            raise ValueError(f"Unknown metric: {metric}")
+
+        def objective(trial):
+            ema_s = trial.suggest_int("EMA_S", EMA1_range[0], EMA1_range[1]-1, step=EMA1_range[2])
+            ema_l = trial.suggest_int("EMA_L", EMA2_range[0], EMA2_range[1]-1, step=EMA2_range[2])
+            periods = trial.suggest_int("RSI_periods", periods_range[0], periods_range[1]-1, step=periods_range[2])
+            rsi_upper = trial.suggest_int("RSI_upper", rsi_upper_range[0], rsi_upper_range[1]-1, step=rsi_upper_range[2])
+            rsi_lower = trial.suggest_int("RSI_lower", rsi_lower_range[0], rsi_lower_range[1]-1, step=rsi_lower_range[2])
+            self.prepare_data_EMA_SMA(ema_s, ema_l)
+            self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
+            self.run_backtest()
+            perf_val = performance_function(self.results["strategy"])
+            # Optuna minimizes by default, so return negative performance for maximization
+            return -perf_val
+
+        study = optuna.create_study(direction="minimize")
+        study.optimize(objective, n_trials=n_trials)
+
+        best = study.best_trial
+        print("Optuna optimization completed.")
+        print(f"Best Parameters: EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}, "
+              f"RSI_periods = {best.params['RSI_periods']}, RSI_upper = {best.params['RSI_upper']}, RSI_lower = {best.params['RSI_lower']}")
+        print(f"Best {self.metric}: {round(-best.value, 6)}")
+
+        # Set the best parameters and run final backtest
+        self.prepare_data_EMA_SMA(best.params['EMA_S'], best.params['EMA_L'])
+        self.prepare_data_RSI(best.params['RSI_periods'], best.params['RSI_upper'], best.params['RSI_lower'])
+        self.run_backtest()
+        self.print_performance()
     ''' Class for the vectorized backtesting of EMA-based trading strategies.
 
     Attributes
@@ -86,12 +132,39 @@ class FindingBacktester():
                     self.tp_year = np.nan
             else:
                 self.tp_year = np.nan
+                
+    def prepare_data_RSI(self, periods=None, rsi_upper=None, rsi_lower=None):
+        '''Adds RSI columns to self.data. Accepts periods, rsi_upper, rsi_lower as optional parameters. Sets them as attributes if provided.'''
+        if self.data is not None:
+            periods_val = periods if periods is not None else getattr(self, 'periods', None)
+            rsi_upper_val = rsi_upper if rsi_upper is not None else getattr(self, 'rsi_upper', None)
+            rsi_lower_val = rsi_lower if rsi_lower is not None else getattr(self, 'rsi_lower', None)
+            if periods_val is None or rsi_upper_val is None or rsi_lower_val is None:
+                raise ValueError("periods, rsi_upper, and rsi_lower must be provided either as parameters or set as instance attributes.")
+            # Set as attributes if provided
+            if periods is not None:
+                self.periods = periods
+            if rsi_upper is not None:
+                self.rsi_upper = rsi_upper
+            if rsi_lower is not None:
+                self.rsi_lower = rsi_lower
+            self.data["U"] = np.where(self.data.price.diff() > 0, self.data.price.diff(), 0)
+            self.data["D"] = np.where(self.data.price.diff() < 0, -self.data.price.diff(), 0)
+            self.data["MA_U"] = self.data.U.rolling(periods_val).mean()
+            self.data["MA_D"] = self.data.D.rolling(periods_val).mean()
+            self.data["RSI"] = self.data.MA_U / (self.data.MA_U + self.data.MA_D) * 100
             
     def test_strategy(self):
-        ''' Backtests the trading strategy.
-        '''
+        ''' Backtests the combined EMA/SMA and RSI strategy. '''
         data = self.data.copy().dropna()
-        data["position"] = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
+        # EMA/SMA signal
+        ema_signal = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
+        # RSI signal
+        rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
+        rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
+        rsi_signal = pd.Series(rsi_signal, index=data.index).fillna(0)
+        # Combine signals: only take position if both signals agree, else 0
+        data["position"] = np.where(ema_signal == rsi_signal, ema_signal, 0)
         data["strategy"] = data["position"].shift(1) * data["returns"]
         data.dropna(inplace=True)
         
@@ -131,16 +204,9 @@ class FindingBacktester():
         self.set_parameters(int(EMA[0]), int(EMA[1]))
         return -self.test_strategy()[0]
     
-    def optimize_parameters(self, EMA1_range, EMA2_range, metric="Multiple"):
+    def optimize_parameters(self, EMA1_range, EMA2_range, periods_range=None, rsi_upper_range=None, rsi_lower_range=None, metric="Multiple"):
         '''
-        Optimizes strategy parameters using a for loop (not brute-force optimizer).
-
-        Parameters
-        ===========
-        EMA1_range, EMA2_range: tuple
-            tuples of the form (start, end, step size)
-        metric: str
-            performance metric to be optimized ("Multiple", "Sharpe", "Sortino", "Calmar", "Kelly")
+        Optimizes strategy parameters for EMA_S, EMA_L, and optionally RSI (periods, rsi_upper, rsi_lower).
         '''
         self.metric = metric
         if metric == "Multiple":
@@ -158,26 +224,49 @@ class FindingBacktester():
 
         EMA_S_values = range(*EMA1_range)
         EMA_L_values = range(*EMA2_range)
+        # If RSI ranges are provided, use them; otherwise, use current attributes
+        periods_values = range(*periods_range) if periods_range else [getattr(self, 'periods', None)]
+        rsi_upper_values = range(*rsi_upper_range) if rsi_upper_range else [getattr(self, 'rsi_upper', None)]
+        rsi_lower_values = range(*rsi_lower_range) if rsi_lower_range else [getattr(self, 'rsi_lower', None)]
+
         from itertools import product
-        combinations = list(product(EMA_S_values, EMA_L_values))
+        combinations = list(product(EMA_S_values, EMA_L_values, periods_values, rsi_upper_values, rsi_lower_values))
         performance = []
+        param_records = []
+
         for comb in combinations:
-            self.prepare_data_EMA_SMA(comb[0], comb[1])
+            ema_s, ema_l, periods, rsi_upper, rsi_lower = comb
+            self.prepare_data_EMA_SMA(ema_s, ema_l)
+            self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
             self.run_backtest()
-            performance.append(performance_function(self.results["strategy"]))
+            perf_val = performance_function(self.results["strategy"])
+            performance.append(perf_val)
+            param_records.append([ema_s, ema_l, periods, rsi_upper, rsi_lower])
 
         import numpy as np
         self.results_overview = pd.DataFrame(
-            data=np.array(combinations),
-            columns=["EMA_S", "EMA_L"]
+            data=np.array(param_records),
+            columns=["EMA_S", "EMA_L", "RSI_periods", "RSI_upper", "RSI_lower"]
         )
         self.results_overview["Performance"] = performance
+
+        print(f"Optimization completed for EMA_S range {EMA1_range}, EMA_L range {EMA2_range}, "
+            f"RSI periods range {periods_range}, RSI upper range {rsi_upper_range}, RSI lower range {rsi_lower_range}, "
+            f"Metric: {self.metric}")
+
         self.find_best_strategy()
 
     def run_backtest(self):
-        ''' Runs the strategy backtest without printing performance. '''
+        ''' Runs the combined EMA/SMA and RSI strategy backtest without printing performance. '''
         data = self.data.copy().dropna()
-        data["position"] = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
+        # EMA/SMA signal
+        ema_signal = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
+        # RSI signal
+        rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
+        rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
+        rsi_signal = pd.Series(rsi_signal, index=data.index).fillna(0)
+        # Combine signals: only take position if both signals agree, else 0
+        data["position"] = np.where(ema_signal == rsi_signal, ema_signal, 0)
         data["strategy"] = data["position"].shift(1) * data["returns"]
         data.dropna(inplace=True)
         data["trades"] = data.position.diff().fillna(0).abs()
@@ -192,9 +281,14 @@ class FindingBacktester():
         EMA_S = int(best.EMA_S.iloc[0])
         EMA_L = int(best.EMA_L.iloc[0])
         perf = best.Performance.iloc[0]
-        print(f"Best Parameters: EMA_S = {EMA_S}, EMA_L = {EMA_L}, {self.metric}: {round(perf, 6)}")
+        # Print combined strategy parameters including RSI if available
+        rsi_info = ""
+        if hasattr(self, "periods") and hasattr(self, "rsi_upper") and hasattr(self, "rsi_lower"):
+            rsi_info = f", RSI Periods = {self.periods}, RSI Upper = {self.rsi_upper}, RSI Lower = {self.rsi_lower}"
+        print(f"Best Parameters: EMA_S = {EMA_S}, EMA_L = {EMA_L}{rsi_info}, {self.metric}: {round(perf, 6)}")
         self.prepare_data_EMA_SMA(EMA_S, EMA_L)
-        self.test_strategy()
+        # Use combined EMA/SMA and RSI logic for backtest and reporting
+        self.run_backtest()
         self.print_performance()
     
     def download_recent_data(self, instrument, count=500, file_name="recent_data.csv", granularity="M1"):
