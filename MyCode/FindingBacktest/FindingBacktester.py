@@ -5,7 +5,7 @@ from scipy.optimize import brute
 plt.style.use("seaborn-v0_8")
 
 class FindingBacktester(): 
-    def optimize_parameters_optuna(self, EMA1_range, EMA2_range, periods_range, rsi_upper_range, rsi_lower_range, metric="Multiple", n_trials=100):
+    def optimize_parameters_optuna(self, EMA1_range, EMA2_range, periods_range, rsi_upper_range, rsi_lower_range, metric="Multiple", n_trials=100, mode="combined"):
         '''
         Optimizes EMA_S, EMA_L, RSI periods, RSI upper, RSI lower using Optuna for efficient search.
         '''
@@ -32,7 +32,7 @@ class FindingBacktester():
             rsi_lower = trial.suggest_int("RSI_lower", rsi_lower_range[0], rsi_lower_range[1]-1, step=rsi_lower_range[2])
             self.prepare_data_EMA_SMA(ema_s, ema_l)
             self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
-            self.run_backtest()
+            self.run_backtest(mode=mode)
             perf_val = performance_function(self.results["strategy"])
             # Optuna minimizes by default, so return negative performance for maximization
             return -perf_val
@@ -42,15 +42,23 @@ class FindingBacktester():
 
         best = study.best_trial
         print("Optuna optimization completed.")
-        print(f"Best Parameters: EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}, "
-              f"RSI_periods = {best.params['RSI_periods']}, RSI_upper = {best.params['RSI_upper']}, RSI_lower = {best.params['RSI_lower']}")
+        if mode == "ema":
+            print(f"Best Parameters (EMA/SMA): EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}")
+        elif mode == "rsi":
+            print(f"Best Parameters (RSI): RSI_periods = {best.params['RSI_periods']}, RSI_upper = {best.params['RSI_upper']}, RSI_lower = {best.params['RSI_lower']}")
+        elif mode == "combined":
+            print(f"Best Parameters (Combined): EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}, "
+                  f"RSI_periods = {best.params['RSI_periods']}, RSI_upper = {best.params['RSI_upper']}, RSI_lower = {best.params['RSI_lower']}")
+        else:
+            print(f"Best Parameters: EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}, "
+                  f"RSI_periods = {best.params['RSI_periods']}, RSI_upper = {best.params['RSI_upper']}, RSI_lower = {best.params['RSI_lower']}")
         print(f"Best {self.metric}: {round(-best.value, 6)}")
 
         # Set the best parameters and run final backtest
         self.prepare_data_EMA_SMA(best.params['EMA_S'], best.params['EMA_L'])
         self.prepare_data_RSI(best.params['RSI_periods'], best.params['RSI_upper'], best.params['RSI_lower'])
-        self.run_backtest()
-        self.print_performance()
+        self.run_backtest(mode=mode)
+        self.print_performance(mode=mode)
     ''' Class for the vectorized backtesting of EMA-based trading strategies.
 
     Attributes
@@ -154,33 +162,47 @@ class FindingBacktester():
             self.data["MA_D"] = self.data.D.rolling(periods_val).mean()
             self.data["RSI"] = self.data.MA_U / (self.data.MA_U + self.data.MA_D) * 100
             
-    def test_strategy(self):
-        ''' Backtests the combined EMA/SMA and RSI strategy. '''
+    def test_strategy(self, mode="combined"):
+        ''' Backtests EMA/SMA, RSI, combined, or EMA/SMA with RSI exit-only filter. '''
         data = self.data.copy().dropna()
-        # EMA/SMA signal
-        ema_signal = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
-        # RSI signal
-        rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
-        rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
-        rsi_signal = pd.Series(rsi_signal, index=data.index).fillna(0)
-        # Combine signals: only take position if both signals agree, else 0
-        data["position"] = np.where(ema_signal == rsi_signal, ema_signal, 0)
+        if mode == "ema":
+            # EMA/SMA only
+            data["position"] = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
+        elif mode == "rsi":
+            # RSI only
+            rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
+            rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
+            data["position"] = pd.Series(rsi_signal, index=data.index).fillna(0)
+        elif mode == "combined":
+            # Combined EMA/SMA and RSI
+            ema_signal = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
+            rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
+            rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
+            rsi_signal = pd.Series(rsi_signal, index=data.index).fillna(0)
+            data["position"] = np.where(ema_signal == rsi_signal, ema_signal, 0)
+        elif mode == "ema_rsi_exit":
+            # EMA/SMA entry, RSI exit-only filter
+            data["position"] = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
+            long_exit_mask = (data["position"] == 1) & (data["RSI"] > self.rsi_upper)
+            short_exit_mask = (data["position"] == -1) & (data["RSI"] < self.rsi_lower)
+            if long_exit_mask.any():
+                data.loc[long_exit_mask, "position"] = 0
+            if short_exit_mask.any():
+                data.loc[short_exit_mask, "position"] = 0
+        else:
+            raise ValueError("mode must be 'ema', 'rsi', 'combined', or 'ema_rsi_exit'")
+
         data["strategy"] = data["position"].shift(1) * data["returns"]
         data.dropna(inplace=True)
-        
-        # determine when a trade takes place
         data["trades"] = data.position.diff().fillna(0).abs()
-        
-        # subtract transaction costs from return when trade takes place
         data.strategy = data.strategy - data.trades * self.tc
-        
         data["creturns"] = data["returns"].cumsum().apply(np.exp)
         data["cstrategy"] = data["strategy"].cumsum().apply(np.exp)
         self.results = data
-        
-        perf = data["cstrategy"].iloc[-1] # absolute performance of the strategy
-        outperf = perf - data["creturns"].iloc[-1] # out-/underperformance of strategy
-        self.print_performance()
+
+        perf = data["cstrategy"].iloc[-1]
+        outperf = perf - data["creturns"].iloc[-1]
+        self.print_performance(mode=mode)
         return round(perf, 6), round(outperf, 6)
     
     def plot_results(self):
@@ -204,7 +226,7 @@ class FindingBacktester():
         self.set_parameters(int(EMA[0]), int(EMA[1]))
         return -self.test_strategy()[0]
     
-    def optimize_parameters(self, EMA1_range, EMA2_range, periods_range=None, rsi_upper_range=None, rsi_lower_range=None, metric="Multiple"):
+    def optimize_parameters(self, EMA1_range, EMA2_range, periods_range=None, rsi_upper_range=None, rsi_lower_range=None, metric="Multiple", mode="combined"):
         '''
         Optimizes strategy parameters for EMA_S, EMA_L, and optionally RSI (periods, rsi_upper, rsi_lower).
         '''
@@ -238,7 +260,7 @@ class FindingBacktester():
             ema_s, ema_l, periods, rsi_upper, rsi_lower = comb
             self.prepare_data_EMA_SMA(ema_s, ema_l)
             self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
-            self.run_backtest()
+            self.run_backtest(mode=mode)
             perf_val = performance_function(self.results["strategy"])
             performance.append(perf_val)
             param_records.append([ema_s, ema_l, periods, rsi_upper, rsi_lower])
@@ -254,19 +276,47 @@ class FindingBacktester():
             f"RSI periods range {periods_range}, RSI upper range {rsi_upper_range}, RSI lower range {rsi_lower_range}, "
             f"Metric: {self.metric}")
 
-        self.find_best_strategy()
+        if mode == "ema":
+            print(f"Optimization completed for EMA_S range {EMA1_range}, EMA_L range {EMA2_range}, Metric: {self.metric} (EMA/SMA mode)")
+        elif mode == "rsi":
+            print(f"Optimization completed for RSI periods range {periods_range}, RSI upper range {rsi_upper_range}, RSI lower range {rsi_lower_range}, Metric: {self.metric} (RSI mode)")
+        elif mode == "combined":
+            print(f"Optimization completed for EMA_S range {EMA1_range}, EMA_L range {EMA2_range}, "
+                  f"RSI periods range {periods_range}, RSI upper range {rsi_upper_range}, RSI lower range {rsi_lower_range}, "
+                  f"Metric: {self.metric} (Combined mode)")
+        else:
+            print(f"Optimization completed for EMA_S range {EMA1_range}, EMA_L range {EMA2_range}, "
+                  f"RSI periods range {periods_range}, RSI upper range {rsi_upper_range}, RSI lower range {rsi_lower_range}, "
+                  f"Metric: {self.metric} (Custom mode)")
 
-    def run_backtest(self):
-        ''' Runs the combined EMA/SMA and RSI strategy backtest without printing performance. '''
+        self.find_best_strategy(mode=mode)
+
+    def run_backtest(self, mode="combined"):
+        ''' Runs EMA/SMA, RSI, combined, or EMA/SMA with RSI exit-only filter backtest without printing performance. '''
         data = self.data.copy().dropna()
-        # EMA/SMA signal
-        ema_signal = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
-        # RSI signal
-        rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
-        rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
-        rsi_signal = pd.Series(rsi_signal, index=data.index).fillna(0)
-        # Combine signals: only take position if both signals agree, else 0
-        data["position"] = np.where(ema_signal == rsi_signal, ema_signal, 0)
+        if mode == "ema":
+            data["position"] = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
+        elif mode == "rsi":
+            rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
+            rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
+            data["position"] = pd.Series(rsi_signal, index=data.index).fillna(0)
+        elif mode == "combined":
+            ema_signal = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
+            rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
+            rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
+            rsi_signal = pd.Series(rsi_signal, index=data.index).fillna(0)
+            data["position"] = np.where(ema_signal == rsi_signal, ema_signal, 0)
+        elif mode == "ema_rsi_exit":
+            data["position"] = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
+            long_exit_mask = (data["position"] == 1) & (data["RSI"] > self.rsi_upper)
+            short_exit_mask = (data["position"] == -1) & (data["RSI"] < self.rsi_lower)
+            if long_exit_mask.any():
+                data.loc[long_exit_mask, "position"] = 0
+            if short_exit_mask.any():
+                data.loc[short_exit_mask, "position"] = 0
+        else:
+            raise ValueError("mode must be 'ema', 'rsi', 'combined', or 'ema_rsi_exit'")
+
         data["strategy"] = data["position"].shift(1) * data["returns"]
         data.dropna(inplace=True)
         data["trades"] = data.position.diff().fillna(0).abs()
@@ -275,7 +325,7 @@ class FindingBacktester():
         data["cstrategy"] = data["strategy"].cumsum().apply(np.exp)
         self.results = data
 
-    def find_best_strategy(self):
+    def find_best_strategy(self, mode="combined"):
         ''' Finds the optimal strategy (global maximum) given the parameter ranges. '''
         best = self.results_overview.nlargest(1, "Performance")
         EMA_S = int(best.EMA_S.iloc[0])
@@ -288,8 +338,8 @@ class FindingBacktester():
         print(f"Best Parameters: EMA_S = {EMA_S}, EMA_L = {EMA_L}{rsi_info}, {self.metric}: {round(perf, 6)}")
         self.prepare_data_EMA_SMA(EMA_S, EMA_L)
         # Use combined EMA/SMA and RSI logic for backtest and reporting
-        self.run_backtest()
-        self.print_performance()
+        self.run_backtest(mode=mode)
+        self.print_performance(mode=mode)
     
     def download_recent_data(self, instrument, count=500, file_name="recent_data.csv", granularity="M1"):
         import oandapyV20
@@ -417,33 +467,38 @@ class FindingBacktester():
 
         # logging.debug("Finished download_recent_data method.")
     
-    def print_performance(self, leverage = False):
-        ''' Calculates and prints various Performance Metrics. '''
-        
+    def print_performance(self, leverage=False, mode="combined"):
+        ''' Calculates and prints various Performance Metrics, with strategy name based on mode. '''
         data = self.results.copy()
-        
         if leverage:
             to_analyze = np.log(data.strategy_levered.add(1))
-        else: 
+        else:
             to_analyze = data.strategy
-        
+
         strategy_multiple = round(self.calculate_multiple(to_analyze), 6)
-        bh_multiple =       round(self.calculate_multiple(data.returns), 6)
-        outperf =           round(strategy_multiple - bh_multiple, 6)
-        cagr =              round(self.calculate_cagr(to_analyze), 6)
-        ann_mean =          round(self.calculate_annualized_mean(to_analyze), 6)
-        ann_std =           round(self.calculate_annualized_std(to_analyze), 6)
-        sharpe =            round(self.calculate_sharpe(to_analyze), 6)
-        sortino =           round(self.calculate_sortino(to_analyze), 6)
-        max_drawdown =      round(self.calculate_max_drawdown(to_analyze), 6)
-        calmar =            round(self.calculate_calmar(to_analyze), 6)
-        max_dd_duration =   round(self.calculate_max_dd_duration(to_analyze), 6)
-        kelly_criterion =   round(self.calculate_kelly_criterion(to_analyze), 6)
-        
+        bh_multiple = round(self.calculate_multiple(data.returns), 6)
+        outperf = round(strategy_multiple - bh_multiple, 6)
+        cagr = round(self.calculate_cagr(to_analyze), 6)
+        ann_mean = round(self.calculate_annualized_mean(to_analyze), 6)
+        ann_std = round(self.calculate_annualized_std(to_analyze), 6)
+        sharpe = round(self.calculate_sharpe(to_analyze), 6)
+        sortino = round(self.calculate_sortino(to_analyze), 6)
+        max_drawdown = round(self.calculate_max_drawdown(to_analyze), 6)
+        calmar = round(self.calculate_calmar(to_analyze), 6)
+        max_dd_duration = round(self.calculate_max_dd_duration(to_analyze), 6)
+        kelly_criterion = round(self.calculate_kelly_criterion(to_analyze), 6)
+
         print(100 * "=")
-        print(f"SIMPLE PIVOT POINT STRATEGY | INSTRUMENT = {self.symbol}")
+        if mode == "ema":
+            strategy_name = "EMA/SMA STRATEGY"
+        elif mode == "rsi":
+            strategy_name = "RSI STRATEGY"
+        elif mode == "combined":
+            strategy_name = "EMA/SMA + RSI COMBINED STRATEGY"
+        else:
+            strategy_name = "CUSTOM STRATEGY"
+        print(f"{strategy_name} | INSTRUMENT = {self.symbol}")
         print(100 * "-")
-        #print("\n")
         print("PERFORMANCE MEASURES:")
         print("\n")
         print("Multiple (Strategy):         {}".format(strategy_multiple))
@@ -460,7 +515,6 @@ class FindingBacktester():
         print("Calmar Ratio:                {}".format(calmar))
         print("Max Drawdown Duration:       {} Days".format(max_dd_duration))
         print("Kelly Criterion:             {}".format(kelly_criterion))
-        
         print(100 * "=")
     
     def calculate_multiple(self, series):
@@ -524,4 +578,3 @@ class FindingBacktester():
             return np.nan
         else:
             return series.mean() / series.var()
-    
