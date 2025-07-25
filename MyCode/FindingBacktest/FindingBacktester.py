@@ -5,7 +5,7 @@ from scipy.optimize import brute
 plt.style.use("seaborn-v0_8")
 
 class FindingBacktester(): 
-    def optimize_parameters_optuna(self, EMA1_range, EMA2_range, periods_range, rsi_upper_range, rsi_lower_range, metric="Multiple", n_trials=100, mode="combined"):
+    def optimize_parameters_optuna(self, EMA1_range, EMA2_range, periods_range, rsi_upper_range, rsi_lower_range, signal_mw_range=(5, 21, 1), metric="Multiple", n_trials=100, mode="ema_rsi_combined"):
         '''
         Optimizes EMA_S, EMA_L, RSI periods, RSI upper, RSI lower using Optuna for efficient search.
         '''
@@ -25,13 +25,67 @@ class FindingBacktester():
             raise ValueError(f"Unknown metric: {metric}")
 
         def objective(trial):
-            ema_s = trial.suggest_int("EMA_S", EMA1_range[0], EMA1_range[1]-1, step=EMA1_range[2])
-            ema_l = trial.suggest_int("EMA_L", EMA2_range[0], EMA2_range[1]-1, step=EMA2_range[2])
-            periods = trial.suggest_int("RSI_periods", periods_range[0], periods_range[1]-1, step=periods_range[2])
-            rsi_upper = trial.suggest_int("RSI_upper", rsi_upper_range[0], rsi_upper_range[1]-1, step=rsi_upper_range[2])
-            rsi_lower = trial.suggest_int("RSI_lower", rsi_lower_range[0], rsi_lower_range[1]-1, step=rsi_lower_range[2])
-            self.prepare_data_EMA_SMA(ema_s, ema_l)
-            self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
+            if mode == "ema":
+                ema_s = trial.suggest_int("EMA_S", EMA1_range[0], EMA1_range[1]-1, step=EMA1_range[2])
+                ema_l = trial.suggest_int("EMA_L", EMA2_range[0], EMA2_range[1]-1, step=EMA2_range[2])
+                periods = None
+                rsi_upper = None
+                rsi_lower = None
+                signal_mw = None
+            elif mode == "rsi":
+                ema_s = None
+                ema_l = None
+                signal_mw = None
+                periods = trial.suggest_int("RSI_periods", periods_range[0], periods_range[1]-1, step=periods_range[2])
+                rsi_upper = trial.suggest_int("RSI_upper", rsi_upper_range[0], rsi_upper_range[1]-1, step=rsi_upper_range[2])
+                rsi_lower = trial.suggest_int("RSI_lower", rsi_lower_range[0], rsi_lower_range[1]-1, step=rsi_lower_range[2])
+            elif mode == "macd":
+                ema_s = trial.suggest_int("EMA_S", EMA1_range[0], EMA1_range[1]-1, step=EMA1_range[2])
+                ema_l = trial.suggest_int("EMA_L", EMA2_range[0], EMA2_range[1]-1, step=EMA2_range[2])
+                signal_mw = trial.suggest_int("signal_mw", signal_mw_range[0], signal_mw_range[1]-1, step=signal_mw_range[2])
+                periods = None
+                rsi_upper = None
+                rsi_lower = None
+            elif mode == "macd_rsi_combined":
+                ema_s = trial.suggest_int("EMA_S", EMA1_range[0], EMA1_range[1]-1, step=EMA1_range[2])
+                ema_l = trial.suggest_int("EMA_L", EMA2_range[0], EMA2_range[1]-1, step=EMA2_range[2])
+                signal_mw = trial.suggest_int("signal_mw", signal_mw_range[0], signal_mw_range[1]-1, step=signal_mw_range[2])
+                periods = trial.suggest_int("RSI_periods", periods_range[0], periods_range[1]-1, step=periods_range[2])
+                rsi_upper = trial.suggest_int("RSI_upper", rsi_upper_range[0], rsi_upper_range[1]-1, step=rsi_upper_range[2])
+                rsi_lower = trial.suggest_int("RSI_lower", rsi_lower_range[0], rsi_lower_range[1]-1, step=rsi_lower_range[2])
+            elif mode == "ema_rsi_combined":
+                ema_s = trial.suggest_int("EMA_S", EMA1_range[0], EMA1_range[1]-1, step=EMA1_range[2])
+                ema_l = trial.suggest_int("EMA_L", EMA2_range[0], EMA2_range[1]-1, step=EMA2_range[2])
+                periods = trial.suggest_int("RSI_periods", periods_range[0], periods_range[1]-1, step=periods_range[2])
+                rsi_upper = trial.suggest_int("RSI_upper", rsi_upper_range[0], rsi_upper_range[1]-1, step=rsi_upper_range[2])
+                rsi_lower = trial.suggest_int("RSI_lower", rsi_lower_range[0], rsi_lower_range[1]-1, step=rsi_lower_range[2])
+                signal_mw = None
+            else:
+                # Default: suggest all
+                ema_s = trial.suggest_int("EMA_S", EMA1_range[0], EMA1_range[1]-1, step=EMA1_range[2])
+                ema_l = trial.suggest_int("EMA_L", EMA2_range[0], EMA2_range[1]-1, step=EMA2_range[2])
+                periods = trial.suggest_int("RSI_periods", periods_range[0], periods_range[1]-1, step=periods_range[2])
+                rsi_upper = trial.suggest_int("RSI_upper", rsi_upper_range[0], rsi_upper_range[1]-1, step=rsi_upper_range[2])
+                rsi_lower = trial.suggest_int("RSI_lower", rsi_lower_range[0], rsi_lower_range[1]-1, step=rsi_lower_range[2])
+                signal_mw = trial.suggest_int("signal_mw", signal_mw_range[0], signal_mw_range[1]-1, step=signal_mw_range[2])
+            if mode == "ema":
+                self.prepare_data_EMA_SMA(ema_s, ema_l)
+            elif mode == "rsi":
+                self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
+            elif mode == "macd":
+                signal_mw = trial.suggest_int("signal_mw", 5, 20, step=1)
+                self.prepare_data_MACD(ema_s, ema_l, signal_mw)
+            elif mode == "macd_rsi_combined":
+                signal_mw = trial.suggest_int("signal_mw", 5, 20, step=1)
+                self.prepare_data_MACD(ema_s, ema_l, signal_mw)
+                self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
+            elif mode == "ema_rsi_combined":
+                self.prepare_data_EMA_SMA(ema_s, ema_l)
+                self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
+            else:
+                # Default: try both
+                self.prepare_data_EMA_SMA(ema_s, ema_l)
+                self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
             self.run_backtest(mode=mode)
             perf_val = performance_function(self.results["strategy"])
             # Optuna minimizes by default, so return negative performance for maximization
@@ -46,17 +100,26 @@ class FindingBacktester():
             print(f"Best Parameters (EMA/SMA): EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}")
         elif mode == "rsi":
             print(f"Best Parameters (RSI): RSI_periods = {best.params['RSI_periods']}, RSI_upper = {best.params['RSI_upper']}, RSI_lower = {best.params['RSI_lower']}")
-        elif mode == "combined":
-            print(f"Best Parameters (Combined): EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}, "
+        elif mode == "ema_rsi_combined":
+            print(f"Best Parameters (EMA+RSI Combined): EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}, "
                   f"RSI_periods = {best.params['RSI_periods']}, RSI_upper = {best.params['RSI_upper']}, RSI_lower = {best.params['RSI_lower']}")
+        elif mode == "macd":
+            print(f"Best Parameters (MACD): EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}, signal_mw = {best.params.get('signal_mw', 'N/A')}")
+        elif mode == "macd_rsi_combined":
+            print(f"Best Parameters (MACD + RSI Combination): EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}, "
+                  f"RSI_periods = {best.params['RSI_periods']}, RSI_upper = {best.params['RSI_upper']}, RSI_lower = {best.params['RSI_lower']}, signal_mw = {best.params.get('signal_mw', 'N/A')}")
         else:
-            print(f"Best Parameters: EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}, "
-                  f"RSI_periods = {best.params['RSI_periods']}, RSI_upper = {best.params['RSI_upper']}, RSI_lower = {best.params['RSI_lower']}")
+            print(f"Best Parameters: EMA_S = {best.params.get('EMA_S', 'N/A')}, EMA_L = {best.params.get('EMA_L', 'N/A')}, "
+                  f"RSI_periods = {best.params.get('RSI_periods', 'N/A')}, RSI_upper = {best.params.get('RSI_upper', 'N/A')}, RSI_lower = {best.params.get('RSI_lower', 'N/A')}, signal_mw = {best.params.get('signal_mw', 'N/A')}")
         print(f"Best {self.metric}: {round(-best.value, 6)}")
 
         # Set the best parameters and run final backtest
-        self.prepare_data_EMA_SMA(best.params['EMA_S'], best.params['EMA_L'])
-        self.prepare_data_RSI(best.params['RSI_periods'], best.params['RSI_upper'], best.params['RSI_lower'])
+        if 'EMA_S' in best.params and 'EMA_L' in best.params:
+            self.prepare_data_EMA_SMA(best.params['EMA_S'], best.params['EMA_L'])
+        if 'signal_mw' in best.params:
+            self.prepare_data_MACD(best.params['EMA_S'], best.params['EMA_L'], best.params['signal_mw'])
+        if 'RSI_periods' in best.params and 'RSI_upper' in best.params and 'RSI_lower' in best.params:
+            self.prepare_data_RSI(best.params['RSI_periods'], best.params['RSI_upper'], best.params['RSI_lower'])
         self.run_backtest(mode=mode)
         self.print_performance(mode=mode)
     ''' Class for the vectorized backtesting of EMA-based trading strategies.
@@ -162,7 +225,53 @@ class FindingBacktester():
             self.data["MA_D"] = self.data.D.rolling(periods_val).mean()
             self.data["RSI"] = self.data.MA_U / (self.data.MA_U + self.data.MA_D) * 100
             
-    def test_strategy(self, mode="combined"):
+    def prepare_data_MACD(self, EMA_S=None, EMA_L=None, signal_mw=None):
+        '''Adds MACD columns to self.data. Accepts EMA_S, EMA_L, signal_mw as optional parameters. Sets them as attributes if provided.'''
+        if self.data is not None:
+            ema_s = EMA_S if EMA_S is not None else getattr(self, 'EMA_S', None)
+            ema_l = EMA_L if EMA_L is not None else getattr(self, 'EMA_L', None)
+            signal_mw_val = signal_mw if signal_mw is not None else getattr(self, 'signal_mw', None)
+            if ema_s is None or ema_l is None or signal_mw_val is None:
+                raise ValueError("EMA_S, EMA_L, and signal_mw must be provided either as parameters or set as instance attributes.")
+            # Set as attributes if provided
+            if EMA_S is not None:
+                self.EMA_S = EMA_S
+            if EMA_L is not None:
+                self.EMA_L = EMA_L
+            if signal_mw is not None:
+                self.signal_mw = signal_mw
+            self.data["MACD_EMA_S"] = self.data["price"].ewm(span=ema_s, min_periods=ema_s).mean()
+            self.data["MACD_EMA_L"] = self.data["price"].ewm(span=ema_l, min_periods=ema_l).mean()
+            self.data["MACD"] = self.data["MACD_EMA_S"] - self.data["MACD_EMA_L"]
+            self.data["MACD_Signal"] = self.data["MACD"].ewm(span=signal_mw_val, min_periods=signal_mw_val).mean()
+        else:
+            ema_s = EMA_S if EMA_S is not None else getattr(self, 'EMA_S', None)
+            ema_l = EMA_L if EMA_L is not None else getattr(self, 'EMA_L', None)
+            signal_mw_val = signal_mw if signal_mw is not None else getattr(self, 'signal_mw', None)
+            if ema_s is None or ema_l is None or signal_mw_val is None:
+                raise ValueError("EMA_S, EMA_L, and signal_mw must be provided either as parameters or set as instance attributes.")
+            # Set as attributes if provided
+            if EMA_S is not None:
+                self.EMA_S = EMA_S
+            if EMA_L is not None:
+                self.EMA_L = EMA_L
+            if signal_mw is not None:
+                self.signal_mw = signal_mw
+            raw = pd.read_csv("forex_pairs.csv", parse_dates=["Date"], index_col="Date")
+            raw = raw[self.symbol].to_frame().dropna()
+            raw = raw.loc[self.start:self.end]
+            raw.rename(columns={self.symbol: "price"}, inplace=True)
+            raw["returns"] = np.log(raw["price"] / raw["price"].shift(1))
+            raw["MACD_EMA_S"] = raw["price"].ewm(span=ema_s, min_periods=ema_s).mean()
+            raw["MACD_EMA_L"] = raw["price"].ewm(span=ema_l, min_periods=ema_l).mean()
+            raw["MACD"] = raw["MACD_EMA_S"] - raw["MACD_EMA_L"]
+            raw["MACD_Signal"] = raw["MACD"].ewm(span=signal_mw_val, min_periods=signal_mw_val).mean()
+            self.data = raw
+
+        # Replace the function definition with the correct signature
+        # ...existing code...
+            
+    def test_strategy(self, mode="ema_rsi_combined"):
         ''' Backtests EMA/SMA, RSI, combined, or EMA/SMA with RSI exit-only filter. '''
         data = self.data.copy().dropna()
         if mode == "ema":
@@ -173,8 +282,8 @@ class FindingBacktester():
             rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
             rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
             data["position"] = pd.Series(rsi_signal, index=data.index).fillna(0)
-        elif mode == "combined":
-            # Combined EMA/SMA and RSI
+        elif mode == "ema_rsi_combined":
+            # EMA/SMA + RSI Combined
             ema_signal = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
             rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
             rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
@@ -189,8 +298,20 @@ class FindingBacktester():
                 data.loc[long_exit_mask, "position"] = 0
             if short_exit_mask.any():
                 data.loc[short_exit_mask, "position"] = 0
+        elif mode == "macd":
+            # MACD strategy: MACD line crosses above/below signal line
+            data["position"] = np.where(data["MACD"] - data["MACD_Signal"] > 0, 1, -1)
+        elif mode == "macd_rsi_combined":
+            # MACD and RSI combination strategy
+            macd_signal = np.where(data["MACD"] - data["MACD_Signal"] > 0, 1, -1)
+            rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
+            rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
+            rsi_signal = pd.Series(rsi_signal, index=data.index).fillna(0)
+            data["position_MACD"] = macd_signal
+            data["position_RSI"] = rsi_signal.astype(int)
+            data["position"] = np.where(data["position_MACD"] == data["position_RSI"], data["position_MACD"], 0)
         else:
-            raise ValueError("mode must be 'ema', 'rsi', 'combined', or 'ema_rsi_exit'")
+            raise ValueError("mode must be 'ema', 'rsi', 'ema_rsi_combined', 'ema_rsi_exit', 'macd', or 'macd_rsi_combined'")
 
         data["strategy"] = data["position"].shift(1) * data["returns"]
         data.dropna(inplace=True)
@@ -226,72 +347,7 @@ class FindingBacktester():
         self.set_parameters(int(EMA[0]), int(EMA[1]))
         return -self.test_strategy()[0]
     
-    def optimize_parameters(self, EMA1_range, EMA2_range, periods_range=None, rsi_upper_range=None, rsi_lower_range=None, metric="Multiple", mode="combined"):
-        '''
-        Optimizes strategy parameters for EMA_S, EMA_L, and optionally RSI (periods, rsi_upper, rsi_lower).
-        '''
-        self.metric = metric
-        if metric == "Multiple":
-            performance_function = self.calculate_multiple
-        elif metric == "Sharpe":
-            performance_function = self.calculate_sharpe
-        elif metric == "Sortino":
-            performance_function = self.calculate_sortino
-        elif metric == "Calmar":
-            performance_function = self.calculate_calmar
-        elif metric == "Kelly":
-            performance_function = self.calculate_kelly_criterion
-        else:
-            raise ValueError(f"Unknown metric: {metric}")
-
-        EMA_S_values = range(*EMA1_range)
-        EMA_L_values = range(*EMA2_range)
-        # If RSI ranges are provided, use them; otherwise, use current attributes
-        periods_values = range(*periods_range) if periods_range else [getattr(self, 'periods', None)]
-        rsi_upper_values = range(*rsi_upper_range) if rsi_upper_range else [getattr(self, 'rsi_upper', None)]
-        rsi_lower_values = range(*rsi_lower_range) if rsi_lower_range else [getattr(self, 'rsi_lower', None)]
-
-        from itertools import product
-        combinations = list(product(EMA_S_values, EMA_L_values, periods_values, rsi_upper_values, rsi_lower_values))
-        performance = []
-        param_records = []
-
-        for comb in combinations:
-            ema_s, ema_l, periods, rsi_upper, rsi_lower = comb
-            self.prepare_data_EMA_SMA(ema_s, ema_l)
-            self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
-            self.run_backtest(mode=mode)
-            perf_val = performance_function(self.results["strategy"])
-            performance.append(perf_val)
-            param_records.append([ema_s, ema_l, periods, rsi_upper, rsi_lower])
-
-        import numpy as np
-        self.results_overview = pd.DataFrame(
-            data=np.array(param_records),
-            columns=["EMA_S", "EMA_L", "RSI_periods", "RSI_upper", "RSI_lower"]
-        )
-        self.results_overview["Performance"] = performance
-
-        print(f"Optimization completed for EMA_S range {EMA1_range}, EMA_L range {EMA2_range}, "
-            f"RSI periods range {periods_range}, RSI upper range {rsi_upper_range}, RSI lower range {rsi_lower_range}, "
-            f"Metric: {self.metric}")
-
-        if mode == "ema":
-            print(f"Optimization completed for EMA_S range {EMA1_range}, EMA_L range {EMA2_range}, Metric: {self.metric} (EMA/SMA mode)")
-        elif mode == "rsi":
-            print(f"Optimization completed for RSI periods range {periods_range}, RSI upper range {rsi_upper_range}, RSI lower range {rsi_lower_range}, Metric: {self.metric} (RSI mode)")
-        elif mode == "combined":
-            print(f"Optimization completed for EMA_S range {EMA1_range}, EMA_L range {EMA2_range}, "
-                  f"RSI periods range {periods_range}, RSI upper range {rsi_upper_range}, RSI lower range {rsi_lower_range}, "
-                  f"Metric: {self.metric} (Combined mode)")
-        else:
-            print(f"Optimization completed for EMA_S range {EMA1_range}, EMA_L range {EMA2_range}, "
-                  f"RSI periods range {periods_range}, RSI upper range {rsi_upper_range}, RSI lower range {rsi_lower_range}, "
-                  f"Metric: {self.metric} (Custom mode)")
-
-        self.find_best_strategy(mode=mode)
-
-    def run_backtest(self, mode="combined"):
+    def run_backtest(self, mode="ema_rsi_combined"):
         ''' Runs EMA/SMA, RSI, combined, or EMA/SMA with RSI exit-only filter backtest without printing performance. '''
         data = self.data.copy().dropna()
         if mode == "ema":
@@ -300,7 +356,7 @@ class FindingBacktester():
             rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
             rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
             data["position"] = pd.Series(rsi_signal, index=data.index).fillna(0)
-        elif mode == "combined":
+        elif mode == "ema_rsi_combined":
             ema_signal = np.where(data["EMA_S"] > data["EMA_L"], 1, -1)
             rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
             rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
@@ -314,8 +370,18 @@ class FindingBacktester():
                 data.loc[long_exit_mask, "position"] = 0
             if short_exit_mask.any():
                 data.loc[short_exit_mask, "position"] = 0
+        elif mode == "macd":
+            data["position"] = np.where(data["MACD"] - data["MACD_Signal"] > 0, 1, -1)
+        elif mode == "macd_rsi_combined":
+            macd_signal = np.where(data["MACD"] - data["MACD_Signal"] > 0, 1, -1)
+            rsi_signal = np.where(data["RSI"] > self.rsi_upper, -1, np.nan)
+            rsi_signal = np.where(data["RSI"] < self.rsi_lower, 1, rsi_signal)
+            rsi_signal = pd.Series(rsi_signal, index=data.index).fillna(0)
+            data["position_MACD"] = macd_signal
+            data["position_RSI"] = rsi_signal.astype(int)
+            data["position"] = np.where(data["position_MACD"] == data["position_RSI"], data["position_MACD"], 0)
         else:
-            raise ValueError("mode must be 'ema', 'rsi', 'combined', or 'ema_rsi_exit'")
+            raise ValueError("mode must be 'ema', 'rsi', 'ema_rsi_combined', 'ema_rsi_exit', 'macd', or 'macd_rsi_combined'")
 
         data["strategy"] = data["position"].shift(1) * data["returns"]
         data.dropna(inplace=True)
@@ -325,7 +391,7 @@ class FindingBacktester():
         data["cstrategy"] = data["strategy"].cumsum().apply(np.exp)
         self.results = data
 
-    def find_best_strategy(self, mode="combined"):
+    def find_best_strategy(self, mode="ema_rsi_combined"):
         ''' Finds the optimal strategy (global maximum) given the parameter ranges. '''
         best = self.results_overview.nlargest(1, "Performance")
         EMA_S = int(best.EMA_S.iloc[0])
@@ -337,7 +403,7 @@ class FindingBacktester():
             rsi_info = f", RSI Periods = {self.periods}, RSI Upper = {self.rsi_upper}, RSI Lower = {self.rsi_lower}"
         print(f"Best Parameters: EMA_S = {EMA_S}, EMA_L = {EMA_L}{rsi_info}, {self.metric}: {round(perf, 6)}")
         self.prepare_data_EMA_SMA(EMA_S, EMA_L)
-        # Use combined EMA/SMA and RSI logic for backtest and reporting
+        # Use EMA+RSI combined logic for backtest and reporting
         self.run_backtest(mode=mode)
         self.print_performance(mode=mode)
     
@@ -467,7 +533,7 @@ class FindingBacktester():
 
         # logging.debug("Finished download_recent_data method.")
     
-    def print_performance(self, leverage=False, mode="combined"):
+    def print_performance(self, leverage=False, mode="ema_rsi_combined"):
         ''' Calculates and prints various Performance Metrics, with strategy name based on mode. '''
         data = self.results.copy()
         if leverage:
@@ -493,8 +559,12 @@ class FindingBacktester():
             strategy_name = "EMA/SMA STRATEGY"
         elif mode == "rsi":
             strategy_name = "RSI STRATEGY"
-        elif mode == "combined":
+        elif mode == "ema_rsi_combined":
             strategy_name = "EMA/SMA + RSI COMBINED STRATEGY"
+        elif mode == "macd":
+            strategy_name = "MACD STRATEGY"
+        elif mode == "macd_rsi_combined":
+            strategy_name = "MACD + RSI COMBINATION STRATEGY"
         else:
             strategy_name = "CUSTOM STRATEGY"
         print(f"{strategy_name} | INSTRUMENT = {self.symbol}")
