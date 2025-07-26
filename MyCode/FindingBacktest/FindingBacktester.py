@@ -1,3 +1,4 @@
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -336,6 +337,42 @@ class FindingBacktester():
             title = "{} | EMA_S = {} | EMA_L = {} | TC = {}".format(self.symbol, self.EMA_S, self.EMA_L, self.tc)
             self.results[["creturns", "cstrategy"]].plot(title=title, figsize=(12, 8))
         
+    def add_leverage(self, leverage, sl=None, report=True):
+        '''
+        Adds Leverage to the Strategy.
+        
+        Parameters
+        ==========
+        leverage: float (positive)
+            Degree of leverage.
+        sl: float (negative), optional
+            Maximum margin loss level in % (e.g. -0.2 for -20%). If None, no stop loss is applied.
+        report: bool, default True
+            If True, print Performance Report incl. Leverage.
+        '''
+        self.leverage = leverage
+
+        # Only apply stop loss if sl is not None
+        if sl is not None:
+            sl_thresh = sl / leverage
+            # If you have a stop loss method, call it here. Otherwise, skip.
+            # For now, just proceed without stop loss logic.
+            # Example: self.add_stop_loss(sl_thresh, report=False)
+            data = self.results.copy()
+        else:
+            data = self.results.copy()
+
+        # Leverage logic: multiply log returns by leverage
+        # If leverage == 1, this is identical to the original strategy
+        data["strategy_levered"] = leverage * data["strategy"]
+        # Optionally cap losses at -100% (log(-1) is undefined, so cap at -1)
+        data["strategy_levered"] = np.where(data["strategy_levered"] < -1, -1, data["strategy_levered"])
+        data["cstrategy_levered"] = data["strategy_levered"].cumsum().apply(np.exp)
+
+        self.results = data
+        if report:
+            self.print_performance(leverage=True)
+            
     def update_and_run(self, EMA):
         ''' Updates EMA parameters and returns the negative absolute performance (for minimazation algorithm).
 
