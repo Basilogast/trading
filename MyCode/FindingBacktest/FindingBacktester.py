@@ -1,4 +1,3 @@
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -337,7 +336,7 @@ class FindingBacktester():
             title = "{} | EMA_S = {} | EMA_L = {} | TC = {}".format(self.symbol, self.EMA_S, self.EMA_L, self.tc)
             self.results[["creturns", "cstrategy"]].plot(title=title, figsize=(12, 8))
         
-    def add_leverage(self, leverage, sl=None, report=True):
+    def add_leverage(self, leverage, sl=None, report=True, mode="ema_rsi_combined"):
         '''
         Adds Leverage to the Strategy.
         
@@ -349,15 +348,15 @@ class FindingBacktester():
             Maximum margin loss level in % (e.g. -0.2 for -20%). If None, no stop loss is applied.
         report: bool, default True
             If True, print Performance Report incl. Leverage.
+        mode: str, default "ema_rsi_combined"
+            Strategy mode to use for stop loss and backtest logic.
         '''
         self.leverage = leverage
 
         # Only apply stop loss if sl is not None
         if sl is not None:
             sl_thresh = sl / leverage
-            # If you have a stop loss method, call it here. Otherwise, skip.
-            # For now, just proceed without stop loss logic.
-            # Example: self.add_stop_loss(sl_thresh, report=False)
+            self.add_stop_loss(sl_thresh, report=False, mode=mode)
             data = self.results.copy()
         else:
             data = self.results.copy()
@@ -371,7 +370,44 @@ class FindingBacktester():
 
         self.results = data
         if report:
-            self.print_performance(leverage=True)
+            self.print_performance(leverage=True, mode=mode)
+            
+    def add_sessions(self):
+        '''Adds/Labels Trading Sessions and their compound returns.'''
+        if self.results is None:
+            print("Run test_strategy() first.")
+            return
+        data = self.results.copy()
+        data["session"] = np.sign(data.trades).cumsum().shift().fillna(0)
+        data["session_compound"] = data.groupby("session").strategy.cumsum().apply(np.exp) - 1
+        self.results = data
+
+    def define_sl_pos(self, group):
+        '''Defines stop loss position for a session group.'''
+        if (group.session_compound <= self.sl_thresh).any():
+            start = group[group.session_compound <= self.sl_thresh].index[0]
+            stop = group.index[-2] if len(group.index) > 1 else group.index[-1]
+            group.loc[start:stop, "position"] = 0
+            return group
+        else:
+            return group
+
+    def add_stop_loss(self, sl_thresh, report=True, mode="ema_rsi_combined"):
+        '''Adds Stop Loss to the Strategy.'''
+        self.sl_thresh = sl_thresh
+        if self.results is None:
+            print("Run test_strategy() first.")
+            return
+        self.add_sessions()
+        self.results = self.results.groupby("session", group_keys=False).apply(self.define_sl_pos, include_groups=False)
+        self.run_backtest(mode=mode)
+        data = self.results.copy()
+        data["creturns"] = data["returns"].cumsum().apply(np.exp)
+        data["cstrategy"] = data["strategy"].cumsum().apply(np.exp)
+        self.results = data
+        self.add_sessions()
+        if report:
+            self.print_performance(mode=mode)
             
     def update_and_run(self, EMA):
         ''' Updates EMA parameters and returns the negative absolute performance (for minimazation algorithm).
