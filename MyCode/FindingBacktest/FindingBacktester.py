@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import brute
 plt.style.use("seaborn-v0_8")
-
 class FindingBacktester(): 
     def optimize_parameters_optuna(self, EMA1_range, EMA2_range, periods_range, rsi_upper_range, rsi_lower_range, signal_mw_range=(5, 21, 1), metric="Multiple", n_trials=100, mode="ema_rsi_combined"):
         '''
@@ -60,6 +59,9 @@ class FindingBacktester():
                 rsi_upper = trial.suggest_int("RSI_upper", rsi_upper_range[0], rsi_upper_range[1]-1, step=rsi_upper_range[2])
                 rsi_lower = trial.suggest_int("RSI_lower", rsi_lower_range[0], rsi_lower_range[1]-1, step=rsi_lower_range[2])
                 signal_mw = None
+            elif mode == "fibonacci":
+                # Only the order parameter is relevant for fibonacci mode
+                order = trial.suggest_int("order", 10, 100, step=5)
             else:
                 # Default: suggest all
                 ema_s = trial.suggest_int("EMA_S", EMA1_range[0], EMA1_range[1]-1, step=EMA1_range[2])
@@ -68,6 +70,7 @@ class FindingBacktester():
                 rsi_upper = trial.suggest_int("RSI_upper", rsi_upper_range[0], rsi_upper_range[1]-1, step=rsi_upper_range[2])
                 rsi_lower = trial.suggest_int("RSI_lower", rsi_lower_range[0], rsi_lower_range[1]-1, step=rsi_lower_range[2])
                 signal_mw = trial.suggest_int("signal_mw", signal_mw_range[0], signal_mw_range[1]-1, step=signal_mw_range[2])
+
             if mode == "ema":
                 self.prepare_data_EMA_SMA(ema_s, ema_l)
             elif mode == "rsi":
@@ -82,6 +85,9 @@ class FindingBacktester():
             elif mode == "ema_rsi_combined":
                 self.prepare_data_EMA_SMA(ema_s, ema_l)
                 self.prepare_data_RSI(periods, rsi_upper, rsi_lower)
+            elif mode == "fibonacci":
+                order = trial.suggest_int("order", 10, 100, step=5)
+                self.prepare_data_fibonacci(order=order)
             else:
                 # Default: try both
                 self.prepare_data_EMA_SMA(ema_s, ema_l)
@@ -108,18 +114,28 @@ class FindingBacktester():
         elif mode == "macd_rsi_combined":
             print(f"Best Parameters (MACD + RSI Combination): EMA_S = {best.params['EMA_S']}, EMA_L = {best.params['EMA_L']}, "
                   f"RSI_periods = {best.params['RSI_periods']}, RSI_upper = {best.params['RSI_upper']}, RSI_lower = {best.params['RSI_lower']}, signal_mw = {best.params.get('signal_mw', 'N/A')}")
+        elif mode == "fibonacci":
+            print(f"Best Parameters (Fibonacci): order = {best.params['order']}")
         else:
             print(f"Best Parameters: EMA_S = {best.params.get('EMA_S', 'N/A')}, EMA_L = {best.params.get('EMA_L', 'N/A')}, "
-                  f"RSI_periods = {best.params.get('RSI_periods', 'N/A')}, RSI_upper = {best.params.get('RSI_upper', 'N/A')}, RSI_lower = {best.params.get('RSI_lower', 'N/A')}, signal_mw = {best.params.get('signal_mw', 'N/A')}")
+                  f"RSI_periods = {best.params.get('RSI_periods', 'N/A')}, RSI_upper = {best.params.get('RSI_upper', 'N/A')}, RSI_lower = {best.params.get('RSI_lower', 'N/A')}, signal_mw = {best.params.get('signal_mw', 'N/A')}, order = {best.params.get('order', 'N/A')}")
         print(f"Best {self.metric}: {round(-best.value, 6)}")
 
         # Set the best parameters and run final backtest
-        if 'EMA_S' in best.params and 'EMA_L' in best.params:
-            self.prepare_data_EMA_SMA(best.params['EMA_S'], best.params['EMA_L'])
-        if 'signal_mw' in best.params:
-            self.prepare_data_MACD(best.params['EMA_S'], best.params['EMA_L'], best.params['signal_mw'])
-        if 'RSI_periods' in best.params and 'RSI_upper' in best.params and 'RSI_lower' in best.params:
-            self.prepare_data_RSI(best.params['RSI_periods'], best.params['RSI_upper'], best.params['RSI_lower'])
+        # --- Patch: Reset self.data to original before final backtest ---
+        if hasattr(self, '_original_data'):
+            self.data = self._original_data.copy()
+        else:
+            self._original_data = self.data.copy()
+        if mode == "fibonacci":
+            self.prepare_data_fibonacci(order=best.params['order'])
+        else:
+            if 'EMA_S' in best.params and 'EMA_L' in best.params:
+                self.prepare_data_EMA_SMA(best.params['EMA_S'], best.params['EMA_L'])
+            if 'signal_mw' in best.params:
+                self.prepare_data_MACD(best.params['EMA_S'], best.params['EMA_L'], best.params['signal_mw'])
+            if 'RSI_periods' in best.params and 'RSI_upper' in best.params and 'RSI_lower' in best.params:
+                self.prepare_data_RSI(best.params['RSI_periods'], best.params['RSI_upper'], best.params['RSI_lower'])
         self.run_backtest(mode=mode)
         self.print_performance(mode=mode)
     ''' Class for the vectorized backtesting of EMA-based trading strategies.
@@ -270,6 +286,44 @@ class FindingBacktester():
 
         # Replace the function definition with the correct signature
         # ...existing code...
+    
+    def prepare_data_fibonacci(self, order=70):
+        '''Adds Fibonacci retracement levels and trend columns to self.data, using local highs/lows. Optimized for speed.'''
+        from scipy.signal import argrelextrema
+        if self.data is None:
+            raise ValueError("self.data must be loaded before calling prepare_data_fibonacci.")
+        data = self.data.copy()
+        # Find all local highs and lows once
+        highs_idx = argrelextrema(data["High"].values, np.greater_equal, order=order)[0]
+        lows_idx = argrelextrema(data["Low"].values, np.less_equal, order=order)[0]
+
+        # Create Series for local highs/lows
+        hh_series = pd.Series(data["High"].values[highs_idx], index=data.index[highs_idx])
+        ll_series = pd.Series(data["Low"].values[lows_idx], index=data.index[lows_idx])
+
+        # Forward-fill to each row: for each row, the most recent local high/low
+        data["hh"] = hh_series.reindex(data.index).ffill()
+        data["hh_date"] = hh_series.reindex(data.index).ffill().index
+        data["ll"] = ll_series.reindex(data.index).ffill()
+        data["ll_date"] = ll_series.reindex(data.index).ffill().index
+
+        # Trend
+        data["Trend"] = np.where(data["hh_date"] > data["ll_date"], "Up", "Down")
+        # Fibonacci Levels
+        data["R23.6"] = np.where(data.Trend == "Up", data.hh - (data.hh-data.ll) * 0.236, data.hh - (data.hh-data.ll) * (1-0.236))
+        data["R38.2"] = np.where(data.Trend == "Up", data.hh - (data.hh-data.ll) * 0.382, data.hh - (data.hh-data.ll) * (1-0.382))
+        # Clean up
+        data.drop(columns=["hh_date", "ll_date"], inplace=True)
+        self.data = data
+        # Calculate tp_year for annualized metrics (match logic from prepare_data_EMA_SMA)
+        if self.data.index.size > 1:
+            days = (self.data.index[-1] - self.data.index[0]).days
+            if days > 0:
+                self.tp_year = self.data.shape[0] / (days / 365.25)
+            else:
+                self.tp_year = np.nan
+        else:
+            self.tp_year = np.nan
             
     def test_strategy(self, mode="ema_rsi_combined"):
         ''' Backtests EMA/SMA, RSI, combined, or EMA/SMA with RSI exit-only filter. '''
@@ -310,8 +364,25 @@ class FindingBacktester():
             data["position_MACD"] = macd_signal
             data["position_RSI"] = rsi_signal.astype(int)
             data["position"] = np.where(data["position_MACD"] == data["position_RSI"], data["position_MACD"], 0)
+
+        elif mode == "fibonacci":
+            # Fibonacci breakout strategy logic
+            # Go Neutral when reaching new Highs/lows (e.g. when Trend reverses)
+            data["position"] = np.where((data.hh != data.hh.shift()) | (data.ll != data.ll.shift()), 0, np.nan)
+            # Downtrend: Go Long when Price breaks R23.6
+            data["position"] = np.where((data.Trend == "Down") & (data.Close.shift() < data["R23.6"].shift()) & (data.Close > data["R23.6"]), 1, data.position)
+            # Downtrend: Go Neutral when Price reaches/breaks R38.2 (Take Profit)
+            data["position"] = np.where((data.Trend == "Down") & (data.Close.shift() < data["R38.2"].shift()) & (data.Close >= data["R38.2"]), 0, data.position)
+            # Downtrend: Go Neutral when Price reaches/breaks ll (Stop Loss)
+            data["position"] = np.where((data.Trend == "Down") & (data.Close.shift() > data.ll.shift()) & (data.Close <= data.ll), 0, data.position)
+            # Uptrend: Go Short when Price breaks R23.6
+            data["position"] = np.where((data.Trend == "Up") & (data.Close.shift() > data["R23.6"].shift()) & (data.Close < data["R23.6"]), -1, data.position)
+            # Uptrend: Go Neutral when Price reaches/breaks R38.2 (Take Profit)
+            data["position"] = np.where((data.Trend == "Up") & (data.Close.shift() > data["R38.2"].shift()) & (data.Close <= data["R38.2"]), 0, data.position)
+            # Uptrend: Go Neutral when Price reaches/breaks hh (Stop Loss)
+            data["position"] = np.where((data.Trend == "Up") & (data.Close.shift() < data.hh.shift()) & (data.Close >= data.hh), 0, data.position)
         else:
-            raise ValueError("mode must be 'ema', 'rsi', 'ema_rsi_combined', 'ema_rsi_exit', 'macd', or 'macd_rsi_combined'")
+            raise ValueError("mode must be 'ema', 'rsi', 'ema_rsi_combined', 'ema_rsi_exit', 'macd', 'macd_rsi_combined', or 'fibonacci'")
 
         data["strategy"] = data["position"].shift(1) * data["returns"]
         data.dropna(inplace=True)
@@ -453,8 +524,17 @@ class FindingBacktester():
             data["position_MACD"] = macd_signal
             data["position_RSI"] = rsi_signal.astype(int)
             data["position"] = np.where(data["position_MACD"] == data["position_RSI"], data["position_MACD"], 0)
+        elif mode == "fibonacci":
+            # Fibonacci breakout strategy logic
+            data["position"] = np.where((data.hh != data.hh.shift()) | (data.ll != data.ll.shift()), 0, np.nan)
+            data["position"] = np.where((data.Trend == "Down") & (data.Close.shift() < data["R23.6"].shift()) & (data.Close > data["R23.6"]), 1, data.position)
+            data["position"] = np.where((data.Trend == "Down") & (data.Close.shift() < data["R38.2"].shift()) & (data.Close >= data["R38.2"]), 0, data.position)
+            data["position"] = np.where((data.Trend == "Down") & (data.Close.shift() > data.ll.shift()) & (data.Close <= data.ll), 0, data.position)
+            data["position"] = np.where((data.Trend == "Up") & (data.Close.shift() > data["R23.6"].shift()) & (data.Close < data["R23.6"]), -1, data.position)
+            data["position"] = np.where((data.Trend == "Up") & (data.Close.shift() > data["R38.2"].shift()) & (data.Close <= data["R38.2"]), 0, data.position)
+            data["position"] = np.where((data.Trend == "Up") & (data.Close.shift() < data.hh.shift()) & (data.Close >= data.hh), 0, data.position)
         else:
-            raise ValueError("mode must be 'ema', 'rsi', 'ema_rsi_combined', 'ema_rsi_exit', 'macd', or 'macd_rsi_combined'")
+            raise ValueError("mode must be 'ema', 'rsi', 'ema_rsi_combined', 'ema_rsi_exit', 'macd', 'macd_rsi_combined', or 'fibonacci'")
 
         data["strategy"] = data["position"].shift(1) * data["returns"]
         data.dropna(inplace=True)
@@ -615,7 +695,8 @@ class FindingBacktester():
             to_analyze = data.strategy
 
         strategy_multiple = round(self.calculate_multiple(to_analyze), 6)
-        bh_multiple = round(self.calculate_multiple(data.returns), 6)
+        # Calculate buy-and-hold over the same period as the strategy for fair comparison
+        bh_multiple = round(self.calculate_multiple(self.data.loc[data.index, 'returns']), 6)
         outperf = round(strategy_multiple - bh_multiple, 6)
         cagr = round(self.calculate_cagr(to_analyze), 6)
         ann_mean = round(self.calculate_annualized_mean(to_analyze), 6)
@@ -638,6 +719,8 @@ class FindingBacktester():
             strategy_name = "MACD STRATEGY"
         elif mode == "macd_rsi_combined":
             strategy_name = "MACD + RSI COMBINATION STRATEGY"
+        elif mode == "fibonacci":
+            strategy_name = "FIBONACCI STRATEGY"
         else:
             strategy_name = "CUSTOM STRATEGY"
         print(f"{strategy_name} | INSTRUMENT = {self.symbol}")
